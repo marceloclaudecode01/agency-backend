@@ -103,7 +103,7 @@ export class ProductsController {
   async getOne(req: AuthRequest, res: Response) {
     try {
       const { id } = req.params;
-      const campaign = await prisma.productCampaign.findUnique({ where: { id } });
+      const campaign = await prisma.productCampaign.findUnique({ where: { id: id as string } });
       if (!campaign) return ApiResponse.error(res, 'Campanha não encontrada', 404);
       return ApiResponse.success(res, campaign);
     } catch (error: any) {
@@ -117,7 +117,7 @@ export class ProductsController {
       const { id } = req.params;
       const { replyTemplate, autoReply, status } = req.body;
       const campaign = await prisma.productCampaign.update({
-        where: { id },
+        where: { id: id as string },
         data: {
           ...(replyTemplate !== undefined && { replyTemplate }),
           ...(autoReply !== undefined && { autoReply }),
@@ -134,7 +134,7 @@ export class ProductsController {
   async delete(req: AuthRequest, res: Response) {
     try {
       const { id } = req.params;
-      await prisma.productCampaign.delete({ where: { id } });
+      await prisma.productCampaign.delete({ where: { id: id as string } });
       return ApiResponse.success(res, null, 'Campanha removida');
     } catch (error: any) {
       return ApiResponse.error(res, 'Erro ao deletar campanha', 500);
