@@ -293,3 +293,15 @@ model ProductCampaign {
 
   @@map("product_campaigns")
 }
+
+model AgentLog {
+  id        String   @id @default(cuid())
+  from      String   // nome do agente que enviou
+  to        String?  // nome do agente destinatário (null = broadcast/sistema)
+  type      String   // "info" | "action" | "result" | "error" | "communication"
+  message   String
+  payload   Json?    // dados extras opcionais
+  createdAt DateTime @default(now())
+
+  @@map("agent_logs")
+}

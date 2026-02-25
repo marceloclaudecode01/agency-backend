@@ -39,4 +39,7 @@ router.get('/growth', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.
 // Token monitor
 router.get('/token/status', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getTokenStatus(req as any, res));
 
+// Logs de comunicação entre agentes
+router.get('/logs', (req, res) => controller.getAgentLogs(req as any, res));
+
 export default router;

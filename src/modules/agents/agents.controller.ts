@@ -324,4 +324,22 @@ export class AgentsController {
       return ApiResponse.error(res, error.message || 'Failed to check token', 500);
     }
   }
+
+  // Logs de comunicação entre agentes
+  async getAgentLogs(req: AuthRequest, res: Response) {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 100, 200);
+      const agentName = req.query.agent as string | undefined;
+      const where = agentName ? { OR: [{ from: agentName }, { to: agentName }] } : {};
+
+      const logs = await prisma.agentLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+      });
+      return ApiResponse.success(res, logs.reverse());
+    } catch (error: any) {
+      return ApiResponse.error(res, 'Failed to get agent logs', 500);
+    }
+  }
 }
