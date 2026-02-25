@@ -26,4 +26,17 @@ router.post('/metrics/run', requireRole('ADMIN', 'MANAGER'), (req, res) => contr
 router.get('/engine/status', (req, res) => controller.getEngineStatus(req as any, res));
 router.post('/engine/run', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.runEngineNow(req as any, res));
 
+// Trending topics
+router.get('/trending', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getTrendingTopics(req as any, res));
+
+// TikTok Shop
+router.get('/products/tiktok', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getTikTokProducts(req as any, res));
+router.post('/products/run', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.runProductOrchestrator(req as any, res));
+
+// Growth insights
+router.get('/growth', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getGrowthInsights(req as any, res));
+
+// Token monitor
+router.get('/token/status', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getTokenStatus(req as any, res));
+
 export default router;

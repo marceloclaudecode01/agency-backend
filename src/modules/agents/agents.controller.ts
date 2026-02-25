@@ -4,6 +4,11 @@ import { ApiResponse } from '../../utils/api-response';
 import { generatePost, generateWeeklyPlan, generatePostFromStrategy } from '../../agents/content-creator.agent';
 import { analyzeMetrics } from '../../agents/metrics-analyzer.agent';
 import { buildDailyStrategy } from '../../agents/content-strategist.agent';
+import { analyzeTrendingTopics } from '../../agents/trending-topics.agent';
+import { orchestrateProductPosts } from '../../agents/product-orchestrator.agent';
+import { fetchBestProducts, fetchTrendingProducts } from '../../agents/tiktok-researcher.agent';
+import { analyzePageGrowth } from '../../agents/growth-analyst.agent';
+import { checkFacebookToken } from '../../agents/token-monitor.agent';
 import { SocialService } from '../social/social.service';
 import { notificationsService } from '../notifications/notifications.service';
 import prisma from '../../config/database';
@@ -262,6 +267,61 @@ export class AgentsController {
       return ApiResponse.success(res, { strategy, created }, `${created.length} posts agendados com sucesso`);
     } catch (error: any) {
       return ApiResponse.error(res, error.message || 'Failed to run engine', 500);
+    }
+  }
+
+  // Analisa trending topics agora
+  async getTrendingTopics(req: AuthRequest, res: Response) {
+    try {
+      const { niche, targetAudience } = req.query as { niche?: string; targetAudience?: string };
+      const report = await analyzeTrendingTopics(niche, targetAudience);
+      return ApiResponse.success(res, report, 'Trending topics analisados');
+    } catch (error: any) {
+      return ApiResponse.error(res, error.message || 'Failed to analyze trending topics', 500);
+    }
+  }
+
+  // Busca produtos trending do TikTok Shop
+  async getTikTokProducts(req: AuthRequest, res: Response) {
+    try {
+      const { query } = req.query as { query?: string };
+      const products = query
+        ? await fetchTrendingProducts(query, 15)
+        : await fetchBestProducts();
+      return ApiResponse.success(res, products, `${products.length} produtos encontrados`);
+    } catch (error: any) {
+      return ApiResponse.error(res, error.message || 'Failed to fetch TikTok products', 500);
+    }
+  }
+
+  // Executa ciclo completo: pesquisa + copy + agenda posts de produto
+  async runProductOrchestrator(req: AuthRequest, res: Response) {
+    try {
+      const { query } = req.body;
+      const result = await orchestrateProductPosts(query);
+      return ApiResponse.success(res, result, `${result.postsCreated} posts de produto criados`);
+    } catch (error: any) {
+      return ApiResponse.error(res, error.message || 'Failed to run product orchestrator', 500);
+    }
+  }
+
+  // Análise de growth da página
+  async getGrowthInsights(req: AuthRequest, res: Response) {
+    try {
+      const insights = await analyzePageGrowth();
+      return ApiResponse.success(res, insights, 'Insights de growth gerados');
+    } catch (error: any) {
+      return ApiResponse.error(res, error.message || 'Failed to analyze growth', 500);
+    }
+  }
+
+  // Status do token do Facebook
+  async getTokenStatus(req: AuthRequest, res: Response) {
+    try {
+      const status = await checkFacebookToken();
+      return ApiResponse.success(res, status, 'Token status verificado');
+    } catch (error: any) {
+      return ApiResponse.error(res, error.message || 'Failed to check token', 500);
     }
   }
 }

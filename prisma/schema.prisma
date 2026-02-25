@@ -264,3 +264,32 @@ model MetricsReport {
 
   @@map("metrics_reports")
 }
+
+enum ProductCampaignStatus {
+  PENDING
+  SCHEDULED
+  PUBLISHED
+  PAUSED
+}
+
+model ProductCampaign {
+  id              String                @id @default(cuid())
+  title           String
+  productUrl      String
+  imageUrl        String
+  productName     String?
+  productPrice    String?
+  productDesc     String?
+  sourceDomain    String?
+  generatedCopy   String?
+  hashtags        String?
+  scheduledPostId String?
+  status          ProductCampaignStatus @default(PENDING)
+  autoReply       Boolean               @default(true)
+  replyTemplate   String?
+  fbPostId        String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@map("product_campaigns")
+}

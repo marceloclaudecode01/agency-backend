@@ -17,8 +17,12 @@ export function errorHandler(err: any, _req: Request, res: Response, _next: Next
     });
   }
 
-  return res.status(err.statusCode || 500).json({
+  if (err.statusCode && err.statusCode < 500) {
+    return res.status(err.statusCode).json({ success: false, message: err.message });
+  }
+
+  return res.status(500).json({
     success: false,
-    message: err.message || 'Internal server error',
+    message: 'Internal server error',
   });
 }

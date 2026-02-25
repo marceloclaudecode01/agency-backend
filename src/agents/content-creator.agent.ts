@@ -53,7 +53,7 @@ export async function generatePostFromStrategy(
     entretenimento: 'Tom leve e divertido. Compartilhe algo que vai entreter o público.',
     engajamento: 'Faça uma pergunta ou crie uma enquete. O objetivo é gerar comentários e interação.',
     novidade: 'Apresente uma novidade ou tendência. Tone informativo mas animado.',
-    cta: 'Inclua uma chamada para ação clara: curtir a página, compartilhar, ou acessar o serviço.',
+    cta: 'Direcione o público para o link na bio. A chamada para ação deve ser clara: "acesse o link na bio", "clique no link da bio" ou variação criativa.',
   };
 
   const focusGuide = focusInstructions[focusType] || focusInstructions['entretenimento'];

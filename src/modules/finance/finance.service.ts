@@ -18,12 +18,16 @@ export class FinanceService {
     });
   }
 
-  async createBudget(data: any) {
-    const processedData = { ...data };
-    if (data.items) processedData.items = JSON.parse(JSON.stringify(data.items));
-
+  async createBudget(data: { title: string; clientId: string; campaignId?: string | null; items?: any[]; total?: number; status?: string }) {
     return prisma.budget.create({
-      data: processedData,
+      data: {
+        title: data.title,
+        clientId: data.clientId,
+        campaignId: data.campaignId ?? null,
+        items: data.items ? JSON.parse(JSON.stringify(data.items)) : [],
+        total: data.total ?? 0,
+        status: (data.status as any) ?? 'DRAFT',
+      },
       include: {
         client: { select: { id: true, name: true, company: true } },
         campaign: { select: { id: true, name: true } },
@@ -31,16 +35,21 @@ export class FinanceService {
     });
   }
 
-  async updateBudget(id: string, data: any) {
+  async updateBudget(id: string, data: { title?: string; clientId?: string; campaignId?: string | null; items?: any[]; total?: number; status?: string }) {
     const budget = await prisma.budget.findUnique({ where: { id } });
     if (!budget) throw { statusCode: 404, message: 'Budget not found' };
 
-    const processedData = { ...data };
-    if (data.items) processedData.items = JSON.parse(JSON.stringify(data.items));
+    const updateData: any = {};
+    if (data.title !== undefined) updateData.title = data.title;
+    if (data.clientId !== undefined) updateData.clientId = data.clientId;
+    if (data.campaignId !== undefined) updateData.campaignId = data.campaignId;
+    if (data.items !== undefined) updateData.items = JSON.parse(JSON.stringify(data.items));
+    if (data.total !== undefined) updateData.total = data.total;
+    if (data.status !== undefined) updateData.status = data.status;
 
     return prisma.budget.update({
       where: { id },
-      data: processedData,
+      data: updateData,
       include: {
         client: { select: { id: true, name: true, company: true } },
         campaign: { select: { id: true, name: true } },
@@ -83,12 +92,15 @@ export class FinanceService {
     });
   }
 
-  async createInvoice(data: any) {
-    const processedData = { ...data };
-    if (data.dueDate) processedData.dueDate = new Date(data.dueDate);
-
+  async createInvoice(data: { clientId: string; budgetId?: string | null; amount: number; status?: string; dueDate?: string | null }) {
     return prisma.invoice.create({
-      data: processedData,
+      data: {
+        clientId: data.clientId,
+        budgetId: data.budgetId ?? null,
+        amount: data.amount,
+        status: (data.status as any) ?? 'PENDING',
+        dueDate: data.dueDate ? new Date(data.dueDate) : null,
+      },
       include: {
         client: { select: { id: true, name: true, company: true } },
         budget: { select: { id: true, total: true, status: true } },
@@ -96,17 +108,23 @@ export class FinanceService {
     });
   }
 
-  async updateInvoice(id: string, data: any) {
+  async updateInvoice(id: string, data: { clientId?: string; budgetId?: string | null; amount?: number; status?: string; dueDate?: string | null }) {
     const invoice = await prisma.invoice.findUnique({ where: { id } });
     if (!invoice) throw { statusCode: 404, message: 'Invoice not found' };
 
-    const processedData = { ...data };
-    if (data.dueDate) processedData.dueDate = new Date(data.dueDate);
-    if (data.status === 'PAID' && !processedData.paidAt) processedData.paidAt = new Date();
+    const updateData: any = {};
+    if (data.clientId !== undefined) updateData.clientId = data.clientId;
+    if (data.budgetId !== undefined) updateData.budgetId = data.budgetId;
+    if (data.amount !== undefined) updateData.amount = data.amount;
+    if (data.status !== undefined) {
+      updateData.status = data.status;
+      if (data.status === 'PAID') updateData.paidAt = new Date();
+    }
+    if (data.dueDate !== undefined) updateData.dueDate = data.dueDate ? new Date(data.dueDate) : null;
 
     return prisma.invoice.update({
       where: { id },
-      data: processedData,
+      data: updateData,
       include: {
         client: { select: { id: true, name: true, company: true } },
         budget: { select: { id: true, total: true, status: true } },

@@ -6,6 +6,9 @@ import { analyzeMetrics } from './metrics-analyzer.agent';
 import { notificationsService } from '../modules/notifications/notifications.service';
 import { buildDailyStrategy } from './content-strategist.agent';
 import { generatePostFromStrategy } from './content-creator.agent';
+import { analyzeTrendingTopics } from './trending-topics.agent';
+import { orchestrateProductPosts } from './product-orchestrator.agent';
+import { runTokenMonitor } from './token-monitor.agent';
 
 const socialService = new SocialService();
 
@@ -76,13 +79,24 @@ export function startPostScheduler() {
         ? `${post.message}\n\n${post.hashtags}`
         : post.message;
 
-      await socialService.publishPost(fullMessage);
+      const publishResult = post.imageUrl
+        ? await socialService.publishPhotoPost(fullMessage, post.imageUrl)
+        : await socialService.publishPost(fullMessage);
+      const fbPostId = publishResult?.id || null;
 
       // Marca como publicado
       await prisma.scheduledPost.update({
         where: { id: post.id },
         data: { status: 'PUBLISHED', publishedAt: now },
       });
+
+      // Atualiza campanha de produto associada com fbPostId e status PUBLISHED
+      if (fbPostId) {
+        await prisma.productCampaign.updateMany({
+          where: { scheduledPostId: post.id },
+          data: { status: 'PUBLISHED', fbPostId },
+        });
+      }
 
       console.log(`[Scheduler] Post publicado: "${post.message.substring(0, 50)}..."`);
 
@@ -111,46 +125,69 @@ export function startPostScheduler() {
   console.log('[Scheduler] Post scheduler iniciado (verificação a cada 5 minutos)');
 }
 
+// Palavras-chave que indicam interesse em comprar
+const BUY_INTENT_KEYWORDS = [
+  'quanto', 'preço', 'valor', 'custa', 'link', 'onde', 'compro', 'comprar',
+  'quero', 'quero esse', 'quero essa', 'me manda', 'manda o link', 'como compro',
+  'como faço', 'disponivel', 'disponível', 'vende', 'tem', 'aceita', 'parcela',
+  'interessei', 'interessada', 'interessado', 'adorei', 'amei', 'preciso',
+];
+
+function hasBuyIntent(text: string): boolean {
+  const lower = text.toLowerCase();
+  return BUY_INTENT_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
 // Roda a cada 30 minutos: verifica e responde comentários novos
 export function startCommentResponder() {
   cron.schedule('*/30 * * * *', async () => {
     try {
       const posts = await socialService.getPosts(10);
 
+      // Busca campanhas de produto publicadas para cruzar com os posts
+      const productCampaigns = await prisma.productCampaign.findMany({
+        where: { status: 'PUBLISHED', autoReply: true, replyTemplate: { not: null } },
+      });
+
       for (const post of posts) {
         const comments = await socialService.getPostComments(post.id);
 
+        // Verifica se este post tem campanha de produto associada
+        const campaign = productCampaigns.find(
+          (c) => c.fbPostId === post.id || (post.message && c.generatedCopy && post.message.includes(c.generatedCopy.substring(0, 50)))
+        );
+
         for (const comment of comments) {
-          // Verifica se já foi respondido
           const alreadyReplied = await prisma.commentLog.findFirst({
             where: { commentId: comment.id },
           });
           if (alreadyReplied) continue;
 
-          // Gera resposta com IA
-          const reply = await generateCommentReply(
-            comment.message,
-            post.message || post.story
-          );
+          let reply = '';
+
+          // Se tem campanha de produto com autoReply E o comentário tem intenção de compra
+          if (campaign?.replyTemplate && hasBuyIntent(comment.message)) {
+            const commenterName = comment.from?.name?.split(' ')[0] || 'você';
+            reply = campaign.replyTemplate.replace('[NOME]', commenterName);
+            console.log(`[Comments] Resposta de produto para: "${comment.message.substring(0, 40)}"`);
+          } else {
+            // Resposta genérica com IA
+            reply = await generateCommentReply(comment.message, post.message || post.story);
+          }
 
           if (!reply) {
-            // Spam/ofensa — apenas loga
             await prisma.commentLog.create({
               data: { commentId: comment.id, action: 'IGNORED', reply: '' },
             });
             continue;
           }
 
-          // Posta a resposta via SocialService
           await socialService.replyToComment(comment.id, reply);
-
           await prisma.commentLog.create({
             data: { commentId: comment.id, action: 'REPLIED', reply },
           });
 
           console.log(`[Comments] Respondido: "${comment.message.substring(0, 40)}" → "${reply.substring(0, 40)}"`);
-
-          // Pausa 3s entre respostas para não parecer bot
           await new Promise((r) => setTimeout(r, 3000));
         }
       }
@@ -309,11 +346,73 @@ export function startAutonomousContentEngine() {
   console.log('[Engine] Motor autônomo iniciado (roda todo dia às 07:00)');
 }
 
+// Roda toda segunda-feira às 6h: analisa tendências e notifica admins
+export function startTrendingTopicsAgent() {
+  cron.schedule('0 6 * * 1', async () => {
+    console.log('[Trending] Analisando tendências da semana...');
+    try {
+      const report = await analyzeTrendingTopics();
+
+      const admins = await prisma.user.findMany({ where: { role: 'ADMIN' } });
+      const topicNames = report.trends.map((t) => t.topic).join(', ');
+
+      for (const admin of admins) {
+        await notificationsService.createAndEmit(
+          admin.id,
+          'TASK_ASSIGNED',
+          'Tendências da semana prontas!',
+          `${report.trends.length} temas em alta identificados: ${topicNames}`
+        );
+      }
+
+      console.log(`[Trending] Relatório gerado com ${report.trends.length} tendências.`);
+    } catch (err: any) {
+      console.error('[Trending] Erro ao analisar tendências:', err.message);
+    }
+  });
+
+  console.log('[Trending] Agente de tendências iniciado (roda toda segunda às 06:00)');
+}
+
+// Roda todo dia às 10h e 15h: orquestra posts de produtos TikTok Shop
+export function startProductOrchestrator() {
+  cron.schedule('0 10,15 * * *', async () => {
+    console.log('[Products] Iniciando ciclo de produtos TikTok Shop...');
+    try {
+      const result = await orchestrateProductPosts();
+      console.log(`[Products] Ciclo concluído: ${result.productsFound} produtos encontrados, ${result.postsCreated} posts criados`);
+    } catch (err: any) {
+      console.error('[Products] Erro no ciclo de produtos:', err.message);
+    }
+  });
+
+  console.log('[Products] Orquestrador de produtos iniciado (roda às 10:00 e 15:00)');
+}
+
+// Verifica token do Facebook todo dia às 9h
+export function startTokenMonitor() {
+  cron.schedule('0 9 * * *', async () => {
+    try {
+      await runTokenMonitor();
+    } catch (err: any) {
+      console.error('[TokenMonitor] Erro:', err.message);
+    }
+  });
+
+  // Verifica também na inicialização
+  runTokenMonitor().catch(() => {});
+
+  console.log('[TokenMonitor] Monitor de token iniciado (verifica todo dia às 09:00)');
+}
+
 export function startAllAgents() {
   startPostScheduler();
   startCommentResponder();
   startMetricsAnalyzer();
   startDueDateNotifier();
   startAutonomousContentEngine();
+  startTrendingTopicsAgent();
+  startProductOrchestrator();
+  startTokenMonitor();
   console.log('[Agents] Todos os agentes iniciados ✓');
 }

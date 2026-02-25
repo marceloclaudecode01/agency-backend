@@ -1,11 +1,12 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
+import { AuthRequest } from '../../types';
 import { UsersService } from './users.service';
 import { ApiResponse } from '../../utils/api-response';
 
 const usersService = new UsersService();
 
 export class UsersController {
-  async findAll(req: Request, res: Response) {
+  async findAll(req: AuthRequest, res: Response) {
     try {
       const users = await usersService.findAll(req.query as any);
       return ApiResponse.success(res, users);
@@ -14,7 +15,7 @@ export class UsersController {
     }
   }
 
-  async findById(req: Request, res: Response) {
+  async findById(req: AuthRequest, res: Response) {
     try {
       const user = await usersService.findById(req.params.id as string);
       return ApiResponse.success(res, user);
@@ -24,7 +25,7 @@ export class UsersController {
     }
   }
 
-  async create(req: Request, res: Response) {
+  async create(req: AuthRequest, res: Response) {
     try {
       const user = await usersService.create(req.body);
       return ApiResponse.created(res, user, 'User created successfully');
@@ -34,7 +35,7 @@ export class UsersController {
     }
   }
 
-  async update(req: Request, res: Response) {
+  async update(req: AuthRequest, res: Response) {
     try {
       const user = await usersService.update(req.params.id as string, req.body);
       return ApiResponse.success(res, user, 'User updated successfully');
@@ -45,11 +46,13 @@ export class UsersController {
     }
   }
 
-  async delete(req: Request, res: Response) {
+  async delete(req: AuthRequest, res: Response) {
     try {
-      await usersService.delete(req.params.id as string);
+      await usersService.delete(req.params.id as string, req.user!.id, req.user!.role);
       return ApiResponse.success(res, null, 'User deleted successfully');
     } catch (error: any) {
+      if (error.statusCode === 400) return ApiResponse.error(res, error.message, 400);
+      if (error.statusCode === 403) return ApiResponse.error(res, error.message, 403);
       if (error.statusCode === 404) return ApiResponse.notFound(res, error.message);
       return ApiResponse.error(res, 'Failed to delete user');
     }

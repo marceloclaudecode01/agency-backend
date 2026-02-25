@@ -2,10 +2,10 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../../config/database';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key';
+const JWT_SECRET = process.env.JWT_SECRET!;
 
 export class AuthService {
-  async register(data: { name: string; email: string; password: string; role?: 'ADMIN' | 'MANAGER' | 'MEMBER' }) {
+  async register(data: { name: string; email: string; password: string }) {
     const existing = await prisma.user.findUnique({ where: { email: data.email } });
     if (existing) {
       throw { statusCode: 409, message: 'Email already registered' };
@@ -18,7 +18,7 @@ export class AuthService {
         name: data.name,
         email: data.email,
         password: hashedPassword,
-        role: data.role || 'MEMBER',
+        role: 'MEMBER',
       },
       select: { id: true, name: true, email: true, role: true, avatar: true, createdAt: true },
     });

@@ -59,7 +59,7 @@ Regras:
 - postsToCreate: entre 1 e 3 (baseado no engajamento recente; se score < 5, crie 3 para aumentar alcance)
 - topics: temas DIFERENTES dos recentes, relevantes para o público (filmes, séries, TV ao vivo, cultura pop, entretenimento)
 - scheduledTimes: horários entre 12:00 e 22:00, com pelo menos 2h de intervalo entre eles
-- focusType: um desses por post: "entretenimento" | "engajamento" | "novidade" | "cta"
+- focusType: um desses por post: "entretenimento" | "engajamento" | "novidade" | "cta" (cta = direcionar para link na bio)
 - reasoning: 1-2 frases explicando a escolha
 `;
 

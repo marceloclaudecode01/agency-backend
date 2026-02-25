@@ -70,9 +70,13 @@ export class UsersService {
     });
   }
 
-  async delete(id: string) {
+  async delete(id: string, requesterId: string, requesterRole: string) {
+    if (id === requesterId) throw { statusCode: 400, message: 'Cannot delete your own account' };
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) throw { statusCode: 404, message: 'User not found' };
+    if (user.role === 'ADMIN' && requesterRole !== 'ADMIN') {
+      throw { statusCode: 403, message: 'Only admins can delete other admins' };
+    }
     return prisma.user.delete({ where: { id } });
   }
 }
