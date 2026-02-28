@@ -5,7 +5,11 @@ import path from 'path';
 
 const execFileAsync = promisify(execFile);
 
-const MUSIC_DIR = path.join(__dirname, '..', 'assets', 'music');
+// In production (dist/services/), assets are at ../../src/assets/music
+// In dev (src/services/), assets are at ../assets/music
+const MUSIC_DIR = fs.existsSync(path.join(__dirname, '..', 'assets', 'music'))
+  ? path.join(__dirname, '..', 'assets', 'music')
+  : path.join(__dirname, '..', '..', 'src', 'assets', 'music');
 
 interface ComposeOptions {
   quote: string;

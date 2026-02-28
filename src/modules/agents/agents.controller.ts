@@ -10,6 +10,7 @@ import { fetchBestProducts, fetchTrendingProducts } from '../../agents/tiktok-re
 import { analyzePageGrowth } from '../../agents/growth-analyst.agent';
 import { checkFacebookToken } from '../../agents/token-monitor.agent';
 import { agentLog } from '../../agents/agent-logger';
+import { generateMotivationalVideo } from '../../agents/motivational-video.agent';
 import cloudinary from '../../config/cloudinary';
 import { SocialService } from '../social/social.service';
 import { notificationsService } from '../notifications/notifications.service';
@@ -418,6 +419,17 @@ Retorne APENAS JSON válido:
       return ApiResponse.success(res, logs.reverse());
     } catch (error: any) {
       return ApiResponse.error(res, 'Failed to get agent logs', 500);
+    }
+  }
+
+  // Testa geração de vídeo motivacional manualmente
+  async testMotivationalVideo(req: AuthRequest, res: Response) {
+    try {
+      await agentLog('Motivational Video', '🎬 Teste manual iniciado via API...', { type: 'action' });
+      await generateMotivationalVideo();
+      return ApiResponse.success(res, { status: 'ok' }, 'Vídeo motivacional gerado e agendado com sucesso');
+    } catch (error: any) {
+      return ApiResponse.error(res, error.message || 'Falha ao gerar vídeo motivacional', 500);
     }
   }
 
