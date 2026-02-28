@@ -82,12 +82,22 @@ export async function composeMotivationalVideo(opts: ComposeOptions): Promise<st
     args.push('-i', musicPath);
   }
 
+  // Music only as audio track (Pexels videos often have no audio stream)
+  if (musicPath) {
+    args.push(
+      '-filter_complex', `${videoFilter};[1:a]atrim=0:${duration},asetpts=PTS-STARTPTS,volume=0.3[aout]`,
+      '-map', '[vout]',
+      '-map', '[aout]',
+    );
+  } else {
+    args.push(
+      '-filter_complex', videoFilter,
+      '-map', '[vout]',
+      '-an', // no audio
+    );
+  }
+
   args.push(
-    '-filter_complex', musicPath
-      ? `${videoFilter};[0:a]volume=0.1[va];[1:a]atrim=0:${duration},asetpts=PTS-STARTPTS,volume=0.2[ma];[va][ma]amix=inputs=2:duration=shortest[aout]`
-      : videoFilter,
-    '-map', '[vout]',
-    '-map', musicPath ? '[aout]' : '0:a?',
     '-c:v', 'libx264',
     '-preset', 'fast',
     '-crf', '23',
