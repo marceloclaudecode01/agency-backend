@@ -73,7 +73,18 @@ app.use('/api/notifications', notificationsRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.1.0' });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.2.0' });
+});
+
+// Temporary test endpoint for motivational video (remove after testing)
+app.post('/api/test/motivational', async (_req, res) => {
+  try {
+    const { generateMotivationalVideo } = await import('./agents/motivational-video.agent');
+    await generateMotivationalVideo();
+    res.json({ success: true, message: 'Vídeo motivacional gerado e agendado' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // Error handler
