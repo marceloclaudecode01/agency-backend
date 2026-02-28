@@ -87,6 +87,27 @@ app.post('/api/test/motivational', async (_req, res) => {
   }
 });
 
+// Force publish now - bypasses scheduler wait
+app.post('/api/test/publish-now', async (_req, res) => {
+  try {
+    const { SocialService } = await import('./modules/social/social.service');
+    const socialService = new SocialService();
+    const post = await prisma.scheduledPost.findFirst({
+      where: { status: 'APPROVED' },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!post) return res.status(404).json({ success: false, error: 'Nenhum post APPROVED encontrado' });
+    const fullMessage = post.hashtags ? `${post.message}\n\n${post.hashtags}` : post.message;
+    const result = post.imageUrl
+      ? await socialService.publishMediaPost(fullMessage, post.imageUrl)
+      : await socialService.publishPost(fullMessage);
+    await prisma.scheduledPost.update({ where: { id: post.id }, data: { status: 'PUBLISHED', publishedAt: new Date() } });
+    res.json({ success: true, fbPostId: result?.id, topic: post.topic, message: fullMessage.substring(0, 100) });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Error handler
 app.use(errorHandler);
 
