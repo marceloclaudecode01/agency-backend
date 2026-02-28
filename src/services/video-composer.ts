@@ -12,7 +12,7 @@ interface ComposeOptions {
   quote: string;
   backgroundVideo: string;
   outputPath: string;
-  duration?: number; // seconds, default 20
+  duration?: number; // seconds, default 15
 }
 
 function getRandomMusic(): string | null {
@@ -66,7 +66,7 @@ function runFFmpeg(args: string[]): Promise<void> {
 }
 
 export async function composeMotivationalVideo(opts: ComposeOptions): Promise<string> {
-  const { quote, backgroundVideo, outputPath, duration = 20 } = opts;
+  const { quote, backgroundVideo, outputPath, duration = 15 } = opts;
 
   const dir = path.dirname(outputPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -84,7 +84,7 @@ export async function composeMotivationalVideo(opts: ComposeOptions): Promise<st
   // Build FFmpeg filter: trim video, scale to 1080x1920, add text overlay
   const textFilter = [
     `drawtext=text='${escapedQuote}'`,
-    'fontsize=56',
+    'fontsize=40',
     'fontcolor=white',
     'borderw=3',
     'bordercolor=black',
@@ -93,8 +93,8 @@ export async function composeMotivationalVideo(opts: ComposeOptions): Promise<st
     'line_spacing=12',
   ].join(':');
 
-  // Use shortest to handle videos shorter than desired duration
-  const videoFilter = `[0:v]setpts=PTS-STARTPTS,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,${textFilter}[vout]`;
+  // 720x1280 for faster encoding on Railway (still HD portrait)
+  const videoFilter = `[0:v]setpts=PTS-STARTPTS,scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,${textFilter}[vout]`;
 
   const args: string[] = [
     '-y',
@@ -119,7 +119,7 @@ export async function composeMotivationalVideo(opts: ComposeOptions): Promise<st
 
   args.push(
     '-c:v', 'libx264',
-    '-preset', 'fast',
+    '-preset', 'ultrafast',
     '-crf', '23',
     '-c:a', 'aac',
     '-b:a', '128k',

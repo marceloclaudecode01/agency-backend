@@ -56,7 +56,7 @@ export async function generateMotivationalVideo(): Promise<void> {
       quote,
       backgroundVideo: bgVideo,
       outputPath,
-      duration: 20,
+      duration: 15,
     });
     await agentLog(AGENT_NAME, 'Vídeo composto com sucesso.', { type: 'result' });
 
