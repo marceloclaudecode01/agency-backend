@@ -1,9 +1,6 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-
-const execFileAsync = promisify(execFile);
 
 // In production (dist/services/), assets are at ../../src/assets/music
 // In dev (src/services/), assets are at ../assets/music
@@ -43,6 +40,31 @@ function wrapText(text: string, maxCharsPerLine: number): string {
   return lines.join('\n');
 }
 
+function runFFmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let stderr = '';
+    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    const timer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      reject(new Error('FFmpeg timeout (180s)'));
+    }, 180_000);
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`FFmpeg exit code ${code}: ${stderr.slice(-500)}`));
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
 export async function composeMotivationalVideo(opts: ComposeOptions): Promise<string> {
   const { quote, backgroundVideo, outputPath, duration = 20 } = opts;
 
@@ -71,19 +93,17 @@ export async function composeMotivationalVideo(opts: ComposeOptions): Promise<st
     'line_spacing=12',
   ].join(':');
 
-  const videoFilter = `[0:v]trim=0:${duration},setpts=PTS-STARTPTS,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,${textFilter}[vout]`;
+  // Use shortest to handle videos shorter than desired duration
+  const videoFilter = `[0:v]setpts=PTS-STARTPTS,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,${textFilter}[vout]`;
 
   const args: string[] = [
     '-y',
     '-i', backgroundVideo,
   ];
 
-  if (musicPath) {
-    args.push('-i', musicPath);
-  }
-
   // Music only as audio track (Pexels videos often have no audio stream)
   if (musicPath) {
+    args.push('-i', musicPath);
     args.push(
       '-filter_complex', `${videoFilter};[1:a]atrim=0:${duration},asetpts=PTS-STARTPTS,volume=0.3[aout]`,
       '-map', '[vout]',
@@ -93,7 +113,7 @@ export async function composeMotivationalVideo(opts: ComposeOptions): Promise<st
     args.push(
       '-filter_complex', videoFilter,
       '-map', '[vout]',
-      '-an', // no audio
+      '-an',
     );
   }
 
@@ -103,12 +123,13 @@ export async function composeMotivationalVideo(opts: ComposeOptions): Promise<st
     '-crf', '23',
     '-c:a', 'aac',
     '-b:a', '128k',
+    '-shortest',
     '-t', String(duration),
     '-movflags', '+faststart',
     outputPath,
   );
 
-  await execFileAsync('ffmpeg', args, { timeout: 120_000 });
+  await runFFmpeg(args);
 
   return outputPath;
 }
