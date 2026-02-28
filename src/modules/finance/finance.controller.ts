@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { FinanceService } from './finance.service';
 import { ApiResponse } from '../../utils/api-response';
+import { pdfService } from './pdf.service';
 
 const financeService = new FinanceService();
 
@@ -100,6 +101,36 @@ export class FinanceController {
     } catch (error: any) {
       if (error.statusCode === 404) return ApiResponse.notFound(res, error.message);
       return ApiResponse.error(res, 'Failed to update invoice');
+    }
+  }
+
+  // Budget PDF export
+  async exportBudgetPdf(req: Request, res: Response) {
+    try {
+      const budget = await financeService.findBudgetById(req.params.id as string);
+      const buffer = await pdfService.generateBudgetPdf(budget as any);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="orcamento-${budget.id}.pdf"`);
+      res.setHeader('Content-Length', buffer.length);
+      return res.end(buffer);
+    } catch (error: any) {
+      if (error.statusCode === 404) return ApiResponse.notFound(res, error.message);
+      return ApiResponse.error(res, 'Failed to generate budget PDF');
+    }
+  }
+
+  // Invoice PDF export
+  async exportInvoicePdf(req: Request, res: Response) {
+    try {
+      const invoice = await financeService.findInvoiceById(req.params.id as string);
+      const buffer = await pdfService.generateInvoicePdf(invoice as any);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="fatura-${invoice.id}.pdf"`);
+      res.setHeader('Content-Length', buffer.length);
+      return res.end(buffer);
+    } catch (error: any) {
+      if (error.statusCode === 404) return ApiResponse.notFound(res, error.message);
+      return ApiResponse.error(res, 'Failed to generate invoice PDF');
     }
   }
 

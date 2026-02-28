@@ -9,6 +9,8 @@ import { orchestrateProductPosts } from '../../agents/product-orchestrator.agent
 import { fetchBestProducts, fetchTrendingProducts } from '../../agents/tiktok-researcher.agent';
 import { analyzePageGrowth } from '../../agents/growth-analyst.agent';
 import { checkFacebookToken } from '../../agents/token-monitor.agent';
+import { agentLog } from '../../agents/agent-logger';
+import cloudinary from '../../config/cloudinary';
 import { SocialService } from '../social/social.service';
 import { notificationsService } from '../notifications/notifications.service';
 import prisma from '../../config/database';
@@ -53,13 +55,13 @@ export class AgentsController {
   // Cria post agendado (após aprovação)
   async createScheduledPost(req: AuthRequest, res: Response) {
     try {
-      const { topic, message, hashtags, imageUrl, scheduledFor } = req.body;
+      const { topic, message, hashtags, imageUrl, mediaUrl, scheduledFor } = req.body;
       const post = await prisma.scheduledPost.create({
         data: {
           topic,
           message,
           hashtags: hashtags ? hashtags.map((h: string) => `#${h.replace('#', '')}`).join(' ') : null,
-          imageUrl,
+          imageUrl: mediaUrl || imageUrl || null,
           scheduledFor: new Date(scheduledFor),
           status: 'APPROVED',
         },
@@ -305,6 +307,82 @@ export class AgentsController {
     }
   }
 
+  // Analisa link de produto, cria copy e agenda post
+  async createPostFromLink(req: AuthRequest, res: Response) {
+    try {
+      const { url, scheduledFor, mediaUrl } = req.body;
+      if (!url) return ApiResponse.error(res, 'URL é obrigatória', 400);
+
+      await agentLog('LinkAnalyzer', `Analisando link: ${url}`, { type: 'action', to: 'Groq' });
+
+      // 1. Resolve redirect do link curto e extrai dados do produto
+      const { analyzeProductLink } = await import('../../agents/link-analyzer.agent');
+      const productInfo = await analyzeProductLink(url);
+
+      await agentLog('LinkAnalyzer', `Produto identificado: ${productInfo.name}`, { type: 'result' });
+
+      // 2. Copywriter cria o post
+      const { askGemini } = await import('../../agents/gemini');
+      const prompt = `
+Você é um copywriter especialista em marketing digital brasileiro para Facebook.
+
+Produto: ${productInfo.name}
+Preço: ${productInfo.price}
+Categoria: ${productInfo.category}
+Descrição: ${productInfo.description}
+Destaques: ${productInfo.highlights.join(', ')}
+Link do produto: ${url}
+
+Crie um post persuasivo para Facebook que:
+1. Para o scroll na primeira linha (hook poderoso, máx 10 palavras)
+2. Gera desejo imediato de compra com os benefícios do produto
+3. Inclui o link do produto no final
+4. Usa emojis estrategicamente (máx 5)
+5. Tom brasileiro, próximo e empolgante
+
+Retorne APENAS JSON válido:
+{
+  "message": "texto completo do post incluindo o link ${url} no final",
+  "hashtags": ["hashtag1", "hashtag2", "hashtag3", "hashtag4", "hashtag5"]
+}`;
+
+      const raw = await askGemini(prompt);
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('Erro ao gerar copy do post');
+
+      const copy = JSON.parse(jsonMatch[0]);
+      const hashtagsStr = (copy.hashtags || []).map((h: string) => `#${h.replace('#', '')}`).join(' ');
+
+      // 3. Agenda o post
+      const scheduleDate = scheduledFor ? new Date(scheduledFor) : (() => {
+        const d = new Date();
+        d.setHours(19, 0, 0, 0);
+        if (d < new Date()) d.setDate(d.getDate() + 1);
+        return d;
+      })();
+
+      const saved = await prisma.scheduledPost.create({
+        data: {
+          topic: `Produto: ${productInfo.name.substring(0, 60)}`,
+          message: copy.message,
+          hashtags: hashtagsStr,
+          imageUrl: mediaUrl || null,
+          status: 'APPROVED',
+          scheduledFor: scheduleDate,
+        },
+      });
+
+      await agentLog('Scheduler', `Post agendado: "${productInfo.name.substring(0, 40)}" para ${scheduleDate.toLocaleString('pt-BR')}`, { type: 'action', to: 'Database' });
+
+      return ApiResponse.success(res, {
+        post: saved,
+        productInfo,
+      }, 'Post criado e agendado com sucesso');
+    } catch (error: any) {
+      return ApiResponse.error(res, error.message || 'Falha ao criar post do link', 500);
+    }
+  }
+
   // Análise de growth da página
   async getGrowthInsights(req: AuthRequest, res: Response) {
     try {
@@ -340,6 +418,45 @@ export class AgentsController {
       return ApiResponse.success(res, logs.reverse());
     } catch (error: any) {
       return ApiResponse.error(res, 'Failed to get agent logs', 500);
+    }
+  }
+
+  // Upload de imagem ou vídeo para o Cloudinary
+  async uploadMedia(req: AuthRequest, res: Response) {
+    try {
+      const file = (req as any).file;
+      if (!file) return ApiResponse.error(res, 'Nenhum arquivo enviado', 400);
+
+      const isVideo = file.mimetype.startsWith('video/');
+      const resourceType = isVideo ? 'video' : 'image';
+
+      const result = await new Promise<any>((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            resource_type: resourceType,
+            folder: 'agency-posts',
+            transformation: isVideo
+              ? [{ duration: '120' }] // limita a 2 minutos
+              : [{ quality: 'auto', fetch_format: 'auto' }],
+          },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          }
+        );
+        stream.end(file.buffer);
+      });
+
+      return ApiResponse.success(res, {
+        url: result.secure_url,
+        publicId: result.public_id,
+        resourceType,
+        width: result.width,
+        height: result.height,
+        duration: result.duration,
+      }, 'Arquivo enviado com sucesso');
+    } catch (error: any) {
+      return ApiResponse.error(res, error.message || 'Erro ao fazer upload', 500);
     }
   }
 }

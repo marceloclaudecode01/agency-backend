@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
@@ -34,6 +35,7 @@ const app = express();
 const PORT = process.env.PORT || 3333;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({
   origin: [FRONTEND_URL, 'http://localhost:3000', 'http://localhost:3001'],
@@ -41,7 +43,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
 }));
-app.use(express.json({ limit: '1mb' }));
+app.use(cookieParser());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '200mb' }));
 
 // Rate limit geral
 app.use(rateLimit({
@@ -69,7 +73,7 @@ app.use('/api/notifications', notificationsRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.1.0' });
 });
 
 // Error handler

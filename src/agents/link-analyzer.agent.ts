@@ -8,9 +8,9 @@ export interface ProductInfo {
   category: string;
   sourceDomain: string;
   highlights: string[];
+  imageUrl?: string;
 }
 
-// Extrai texto relevante de uma página HTML
 function extractTextFromHtml(html: string): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -18,7 +18,7 @@ function extractTextFromHtml(html: string): string {
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .substring(0, 4000);
+    .substring(0, 5000);
 }
 
 function extractDomain(url: string): string {
@@ -29,52 +29,82 @@ function extractDomain(url: string): string {
   }
 }
 
+function extractImageFromHtml(html: string): string | undefined {
+  // og:image
+  const ogImage = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+  if (ogImage) return ogImage[1];
+  // twitter:image
+  const twitterImage = html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i);
+  if (twitterImage) return twitterImage[1];
+  return undefined;
+}
+
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+};
+
 export async function analyzeProductLink(url: string): Promise<ProductInfo> {
-  const domain = extractDomain(url);
+  let finalUrl = url;
   let pageText = '';
+  let imageUrl: string | undefined;
+  const domain = extractDomain(url);
 
   try {
+    // Resolve redirects (links curtos vt.tiktok.com, etc.)
     const response = await axios.get(url, {
-      timeout: 10000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-      maxRedirects: 5,
+      timeout: 15000,
+      headers: BROWSER_HEADERS,
+      maxRedirects: 10,
+      validateStatus: (status) => status < 500,
     });
-    pageText = extractTextFromHtml(response.data);
-  } catch {
-    // Se não conseguir acessar, usa só o domínio como contexto
+
+    finalUrl = response.request?.res?.responseUrl || response.config?.url || url;
+    const html = typeof response.data === 'string' ? response.data : '';
+    pageText = extractTextFromHtml(html);
+    imageUrl = extractImageFromHtml(html);
+  } catch (err: any) {
+    console.warn('[LinkAnalyzer] Erro ao acessar URL:', err.message);
     pageText = `Produto disponível em ${domain}`;
   }
+
+  const finalDomain = extractDomain(finalUrl);
 
   const prompt = `
 Você é um especialista em análise de produtos para marketing digital.
 
-URL do produto: ${url}
-Domínio: ${domain}
-Conteúdo da página (pode estar incompleto):
+URL original: ${url}
+URL final (após redirect): ${finalUrl}
+Domínio: ${finalDomain}
+Conteúdo da página:
 ---
 ${pageText}
 ---
 
-Com base nessas informações, extraia os dados do produto.
-Se não conseguir identificar algum campo, faça uma estimativa inteligente baseada no domínio e contexto.
+Analise as informações e extraia os dados do produto.
+Se for um link do TikTok Shop (tiktok.com/shop), Shopee, Amazon, Mercado Livre, AliExpress — use o contexto para inferir o produto.
+Se não conseguir identificar um campo, faça uma estimativa inteligente.
 
 Retorne APENAS JSON válido:
 {
-  "name": "nome do produto",
+  "name": "nome comercial e atrativo do produto",
   "price": "preço com moeda (ex: R$ 49,90) ou 'Consulte o link'",
-  "description": "descrição do produto em 1-2 frases",
-  "category": "categoria do produto (ex: Beleza, Moda, Casa, Tecnologia, Alimentos, etc)",
-  "highlights": ["benefício 1", "benefício 2", "benefício 3"]
+  "description": "descrição do produto em 1-2 frases persuasivas",
+  "category": "categoria (Beleza, Moda, Casa, Tecnologia, Fitness, Alimentos, etc)",
+  "highlights": ["benefício ou diferencial 1", "benefício 2", "benefício 3"]
 }
 
 Regras:
-- name: nome limpo e comercial, sem códigos
-- highlights: 3 pontos fortes do produto que geram desejo de compra
-- Se for TikTok Shop, Shopee, Amazon, Mercado Livre — use o contexto do domínio para inferir o tipo de produto
+- name: nome limpo, sem códigos ou IDs
+- highlights: 3 pontos que geram desejo de compra
+- description: foco em benefício, não em características técnicas
 `;
 
   const raw = await askGemini(prompt);
@@ -87,7 +117,8 @@ Regras:
     price: info.price || 'Consulte o link',
     description: info.description || '',
     category: info.category || 'Geral',
-    sourceDomain: domain,
+    sourceDomain: finalDomain,
     highlights: info.highlights || [],
+    imageUrl,
   };
 }

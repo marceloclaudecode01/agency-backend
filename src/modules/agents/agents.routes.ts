@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { AgentsController } from './agents.controller';
 import { authMiddleware, requireRole } from '../../middlewares/auth';
+import { upload } from '../../middlewares/upload';
 
 const router = Router();
 const controller = new AgentsController();
@@ -32,6 +33,12 @@ router.get('/trending', requireRole('ADMIN', 'MANAGER'), (req, res) => controlle
 // TikTok Shop
 router.get('/products/tiktok', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getTikTokProducts(req as any, res));
 router.post('/products/run', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.runProductOrchestrator(req as any, res));
+
+// Criar post a partir de link de produto
+router.post('/post-from-link', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.createPostFromLink(req as any, res));
+
+// Upload de mídia (imagem ou vídeo)
+router.post('/upload-media', requireRole('ADMIN', 'MANAGER'), upload.single('file'), (req, res) => controller.uploadMedia(req as any, res));
 
 // Growth insights
 router.get('/growth', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getGrowthInsights(req as any, res));

@@ -40,7 +40,8 @@ export class SocialController {
       const data = await socialService.getPosts(limit);
       return ApiResponse.success(res, data);
     } catch (error: any) {
-      return ApiResponse.error(res, error.message || 'Failed to get posts', error.statusCode || 500);
+      const status = error.statusCode || 500;
+      return ApiResponse.error(res, error.message || 'Failed to get posts', status, error.fbResponse || null);
     }
   }
 
@@ -55,13 +56,13 @@ export class SocialController {
 
   async publishPost(req: AuthRequest, res: Response) {
     try {
-      const { message, imageUrl, scheduledTime } = req.body;
-      let data;
-      if (imageUrl) {
-        data = await socialService.publishPhotoPost(message, imageUrl, scheduledTime);
-      } else {
-        data = await socialService.publishPost(message, scheduledTime);
-      }
+      const { message, imageUrl, mediaUrl, mediaType, linkUrl, scheduledTime } = req.body;
+      const finalMediaUrl = mediaUrl || imageUrl || null;
+
+      const data = finalMediaUrl
+        ? await socialService.publishMediaPost(message, finalMediaUrl, { mediaType, linkUrl, scheduledTime })
+        : await socialService.publishPost(message, { linkUrl, scheduledTime });
+
       return ApiResponse.created(res, data, scheduledTime ? 'Post scheduled successfully' : 'Post published successfully');
     } catch (error: any) {
       return ApiResponse.error(res, error.response?.data?.error?.message || error.message || 'Failed to publish post', error.statusCode || 500);
@@ -70,7 +71,7 @@ export class SocialController {
 
   async deletePost(req: AuthRequest, res: Response) {
     try {
-      const postId = req.params["postId"] as string;
+      const postId = req.params['postId'] as string;
       const data = await socialService.deletePost(postId);
       return ApiResponse.success(res, data, 'Post deleted successfully');
     } catch (error: any) {
@@ -80,7 +81,7 @@ export class SocialController {
 
   async getPostComments(req: Request, res: Response) {
     try {
-      const postId = req.params["postId"] as string;
+      const postId = req.params['postId'] as string;
       const data = await socialService.getPostComments(postId);
       return ApiResponse.success(res, data);
     } catch (error: any) {

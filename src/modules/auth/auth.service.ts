@@ -2,9 +2,72 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../../config/database';
 
-const JWT_SECRET = process.env.JWT_SECRET!;
+const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET;
+const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET;
+
+if (!ACCESS_TOKEN_SECRET) {
+  throw new Error('JWT_SECRET environment variable is not set');
+}
+if (!REFRESH_TOKEN_SECRET) {
+  throw new Error('REFRESH_TOKEN_SECRET environment variable is not set');
+}
+
+// In-memory blacklist for refresh tokens
+const refreshTokenBlacklist = new Set<string>();
 
 export class AuthService {
+  generateAccessToken(user: { id: string; email: string; role: string }): string {
+    return jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      ACCESS_TOKEN_SECRET as string,
+      { expiresIn: '15m' }
+    );
+  }
+
+  generateRefreshToken(userId: string): string {
+    return jwt.sign(
+      { id: userId },
+      REFRESH_TOKEN_SECRET as string,
+      { expiresIn: '30d' }
+    );
+  }
+
+  addToBlacklist(token: string): void {
+    refreshTokenBlacklist.add(token);
+  }
+
+  isBlacklisted(token: string): boolean {
+    return refreshTokenBlacklist.has(token);
+  }
+
+  async refreshAccessToken(refreshToken: string): Promise<string> {
+    if (this.isBlacklisted(refreshToken)) {
+      throw { statusCode: 401, message: 'Refresh token has been revoked' };
+    }
+
+    let decoded: { id: string };
+    try {
+      decoded = jwt.verify(refreshToken, REFRESH_TOKEN_SECRET as string) as { id: string };
+    } catch {
+      throw { statusCode: 401, message: 'Invalid or expired refresh token' };
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, email: true, role: true },
+    });
+
+    if (!user) {
+      throw { statusCode: 401, message: 'User not found' };
+    }
+
+    return this.generateAccessToken(user);
+  }
+
+  invalidateRefreshToken(token: string): void {
+    this.addToBlacklist(token);
+  }
+
   async register(data: { name: string; email: string; password: string }) {
     const existing = await prisma.user.findUnique({ where: { email: data.email } });
     if (existing) {
@@ -23,7 +86,9 @@ export class AuthService {
       select: { id: true, name: true, email: true, role: true, avatar: true, createdAt: true },
     });
 
-    return user;
+    const accessToken = this.generateAccessToken(user);
+    const refreshToken = this.generateRefreshToken(user.id);
+    return { user, accessToken, refreshToken };
   }
 
   async login(email: string, password: string) {
@@ -37,14 +102,11 @@ export class AuthService {
       throw { statusCode: 401, message: 'Invalid credentials' };
     }
 
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const accessToken = this.generateAccessToken({ id: user.id, email: user.email, role: user.role });
+    const refreshToken = this.generateRefreshToken(user.id);
 
     const { password: _, ...userWithoutPassword } = user;
-    return { user: userWithoutPassword, token };
+    return { user: userWithoutPassword, accessToken, refreshToken };
   }
 
   async getProfile(userId: string) {
@@ -73,7 +135,7 @@ export class AuthService {
       }
     }
 
-    const updateData: any = {};
+    const updateData: Record<string, unknown> = {};
     if (data.name) updateData.name = data.name;
     if (data.email) updateData.email = data.email;
 
