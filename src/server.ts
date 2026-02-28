@@ -13,6 +13,7 @@ import authRoutes from './modules/auth/auth.routes';
 import dashboardRoutes from './modules/dashboard/dashboard.routes';
 import clientsRoutes from './modules/clients/clients.routes';
 import campaignsRoutes from './modules/campaigns/campaigns.routes';
+import analyticsRoutes from './modules/analytics/analytics.routes';
 import tasksRoutes from './modules/tasks/tasks.routes';
 import financeRoutes from './modules/finance/finance.routes';
 import reportsRoutes from './modules/reports/reports.routes';
@@ -70,6 +71,7 @@ app.use('/api/agents', agentsRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -163,6 +165,21 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {});
+});
+
+// Global error handlers - prevent crash
+process.on('uncaughtException', (err) => {
+  console.error('[CRITICAL] Uncaught Exception:', err.message);
+  import('./agents/agent-logger').then(({ agentLog }) => {
+    agentLog('Sistema', `🔴 Erro não capturado: ${err.message}`, { type: 'error' }).catch(() => {});
+  });
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  console.error('[CRITICAL] Unhandled Rejection:', reason?.message || reason);
+  import('./agents/agent-logger').then(({ agentLog }) => {
+    agentLog('Sistema', `🔴 Promise rejeitada: ${reason?.message || reason}`, { type: 'error' }).catch(() => {});
+  });
 });
 
 httpServer.listen(PORT, () => {

@@ -1,4 +1,5 @@
 import { askGemini } from './gemini';
+import { getTopPerformingPosts } from './performance-collector.agent';
 
 const PAGE_CONTEXT = `
 Você é o agente de conteúdo da página "NewPlay Tv Online" no Facebook.
@@ -59,12 +60,21 @@ export async function generatePostFromStrategy(
   const focusGuide = focusInstructions[focusType] || focusInstructions['entretenimento'];
   const recentStr = recentTopics.length > 0 ? recentTopics.join(', ') : 'nenhum';
 
+  // Get top performing posts for context
+  let performanceContext = '';
+  try {
+    const topPosts = await getTopPerformingPosts(5);
+    if (topPosts.length > 0) {
+      performanceContext = `\nPosts que tiveram MELHOR engajamento recentemente:\n${topPosts.map((p) => `- "${p.topic}" (${p.likes} likes)`).join('\n')}\nUse energia/estilo similar ao que funciona.\n`;
+    }
+  } catch {}
+
   const prompt = `
 ${PAGE_CONTEXT}
 
 Crie um post para o Facebook sobre o tema: "${topic}"
 Tipo de foco: ${focusType} — ${focusGuide}
-
+${performanceContext}
 IMPORTANTE: NÃO repita esses temas recentes: ${recentStr}
 
 Retorne APENAS um JSON válido neste formato exato:

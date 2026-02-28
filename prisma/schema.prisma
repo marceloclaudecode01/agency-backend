@@ -228,16 +228,23 @@ enum ScheduledPostStatus {
 }
 
 model ScheduledPost {
-  id          String              @id @default(cuid())
-  topic       String
-  message     String
-  hashtags    String?
-  imageUrl    String?
+  id           String              @id @default(cuid())
+  topic        String
+  message      String
+  hashtags     String?
+  imageUrl     String?
   scheduledFor DateTime
-  status      ScheduledPostStatus @default(PENDING)
-  publishedAt DateTime?
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  status       ScheduledPostStatus @default(PENDING)
+  publishedAt  DateTime?
+  retryCount   Int                 @default(0)
+  lastError    String?
+  platform     String[]            @default(["facebook"])
+  fbPostId     String?
+  igPostId     String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  performance  PostPerformance[]
 
   @@map("scheduled_posts")
 }
@@ -304,4 +311,20 @@ model AgentLog {
   createdAt DateTime @default(now())
 
   @@map("agent_logs")
+}
+
+model PostPerformance {
+  id              String   @id @default(cuid())
+  scheduledPostId String
+  platform        String   // "facebook" | "instagram"
+  likes           Int      @default(0)
+  comments        Int      @default(0)
+  shares          Int      @default(0)
+  reach           Int      @default(0)
+  engagementRate  Float    @default(0)
+  collectedAt     DateTime @default(now())
+
+  scheduledPost ScheduledPost @relation(fields: [scheduledPostId], references: [id], onDelete: Cascade)
+
+  @@map("post_performances")
 }

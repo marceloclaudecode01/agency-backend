@@ -10,6 +10,7 @@ import { analyzeTrendingTopics } from './trending-topics.agent';
 import { orchestrateProductPosts } from './product-orchestrator.agent';
 import { runTokenMonitor } from './token-monitor.agent';
 import { generateMotivationalVideo } from './motivational-video.agent';
+import { collectPostPerformance } from './performance-collector.agent';
 import { agentLog } from './agent-logger';
 
 const socialService = new SocialService();
@@ -70,19 +71,44 @@ export function startPostScheduler() {
       }
 
       const post = pendingPosts[0];
+
+      // Skip posts in backoff period
+      if (post.retryCount > 0) {
+        const backoffMinutes = post.retryCount * 15;
+        const timeSinceLastTry = (now.getTime() - post.updatedAt.getTime()) / (1000 * 60);
+        if (timeSinceLastTry < backoffMinutes) return;
+      }
+
       await agentLog('Scheduler', `Post encontrado para publicação: "${post.topic || post.message.substring(0, 50)}"`, { type: 'action', to: 'Facebook API' });
 
       const fullMessage = post.hashtags ? `${post.message}\n\n${post.hashtags}` : post.message;
 
+      // Publish to Facebook
+      let fbPostId: string | null = null;
       const publishResult = post.imageUrl
         ? await socialService.publishMediaPost(fullMessage, post.imageUrl)
         : await socialService.publishPost(fullMessage);
-      const fbPostId = publishResult?.id || null;
+      fbPostId = publishResult?.id || null;
 
-      await prisma.scheduledPost.update({ where: { id: post.id }, data: { status: 'PUBLISHED', publishedAt: now } });
+      await prisma.scheduledPost.update({ where: { id: post.id }, data: { status: 'PUBLISHED', publishedAt: now, fbPostId } });
 
       if (fbPostId) {
         await prisma.productCampaign.updateMany({ where: { scheduledPostId: post.id }, data: { status: 'PUBLISHED', fbPostId } });
+      }
+
+      // Cross-post to Instagram if enabled
+      if (post.platform.includes('instagram') && process.env.INSTAGRAM_ACCOUNT_ID) {
+        try {
+          const igResult = post.imageUrl
+            ? await socialService.publishInstagramMedia(fullMessage, post.imageUrl)
+            : null;
+          if (igResult?.id) {
+            await prisma.scheduledPost.update({ where: { id: post.id }, data: { igPostId: igResult.id } });
+            await agentLog('Scheduler', `✅ Post publicado no Instagram! ID: ${igResult.id}`, { type: 'result', payload: { igPostId: igResult.id } });
+          }
+        } catch (igErr: any) {
+          await agentLog('Scheduler', `⚠️ Instagram falhou (FB ok): ${igErr.message}`, { type: 'error' });
+        }
       }
 
       await agentLog('Scheduler', `✅ Post publicado no Facebook com sucesso! ID: ${fbPostId || 'N/A'}`, { type: 'result', payload: { topic: post.topic, fbPostId } });
@@ -96,23 +122,26 @@ export function startPostScheduler() {
         (err.message && (err.message.includes('pages_manage_posts') || err.message.includes('pages_read_engagement') || err.message.includes('#200')));
 
       if (isPermissionError) {
-        console.error('[Scheduler] ⚠️ Token sem permissão pages_manage_posts. Configure um Page Access Token com as permissões corretas no Facebook Developer.');
-        await agentLog('Scheduler', '⚠️ Token sem permissão de publicação (pages_manage_posts). Posts marcados como FAILED. Atualize o token no Railway.', { type: 'error' });
-        // Mark all pending posts as FAILED to stop retrying
+        console.error('[Scheduler] ⚠️ Token sem permissão pages_manage_posts.');
+        await agentLog('Scheduler', '⚠️ Token sem permissão de publicação. Posts marcados como FAILED.', { type: 'error' });
         try {
-          await prisma.scheduledPost.updateMany({
-            where: { status: 'APPROVED' },
-            data: { status: 'FAILED' },
-          });
+          await prisma.scheduledPost.updateMany({ where: { status: 'APPROVED' }, data: { status: 'FAILED' } });
         } catch {}
         return;
       }
 
-      console.error('[Scheduler] Erro ao publicar post:', err.message);
-      await agentLog('Scheduler', `❌ Erro ao publicar post: ${err.message}`, { type: 'error' });
-      try {
-        await prisma.scheduledPost.update({ where: { id: pendingPosts[0]?.id }, data: { status: 'FAILED' } });
-      } catch {}
+      // Retry logic: up to 3 attempts with backoff
+      const post = pendingPosts[0];
+      if (post) {
+        const newRetryCount = (post.retryCount || 0) + 1;
+        if (newRetryCount >= 3) {
+          await prisma.scheduledPost.update({ where: { id: post.id }, data: { status: 'FAILED', retryCount: newRetryCount, lastError: err.message } });
+          await agentLog('Scheduler', `❌ Post falhou após ${newRetryCount} tentativas: ${err.message}`, { type: 'error' });
+        } else {
+          await prisma.scheduledPost.update({ where: { id: post.id }, data: { retryCount: newRetryCount, lastError: err.message } });
+          await agentLog('Scheduler', `⚠️ Tentativa ${newRetryCount}/3 falhou. Retry em ${newRetryCount * 15}min: ${err.message}`, { type: 'info' });
+        }
+      }
     }
   });
 
@@ -432,6 +461,20 @@ export function startMotivationalVideoAgent() {
   console.log('[Motivational] Agente de vídeos motivacionais iniciado (6h, 12h, 18h)');
 }
 
+// Roda todo dia às 20:00: coleta métricas de engajamento dos posts
+export function startPerformanceCollector() {
+  cron.schedule('0 20 * * *', async () => {
+    try {
+      await collectPostPerformance();
+    } catch (err: any) {
+      console.error('[Performance] Erro:', err.message);
+      await agentLog('Performance Collector', `❌ Erro: ${err.message}`, { type: 'error' });
+    }
+  });
+
+  console.log('[Performance] Coletor de performance iniciado (roda todo dia às 20:00)');
+}
+
 export function startAllAgents() {
   startPostScheduler();
   startCommentResponder();
@@ -442,7 +485,8 @@ export function startAllAgents() {
   startProductOrchestrator();
   startTokenMonitor();
   startMotivationalVideoAgent();
+  startPerformanceCollector();
   // Log de inicialização
-  agentLog('Sistema', '🟢 Todos os 14 agentes da agência iniciados e monitorando.', { type: 'info' }).catch(() => {});
+  agentLog('Sistema', '🟢 Todos os 15 agentes da agência iniciados e monitorando.', { type: 'info' }).catch(() => {});
   console.log('[Agents] Todos os agentes iniciados ✓');
 }

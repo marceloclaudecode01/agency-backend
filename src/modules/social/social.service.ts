@@ -218,4 +218,73 @@ export class SocialService {
       return { connected: false, error: err.message || 'Connection failed' };
     }
   }
+
+  // --- Instagram Methods (Meta Graph API) ---
+
+  private getInstagramId() {
+    const id = process.env.INSTAGRAM_ACCOUNT_ID;
+    if (!id) throw { statusCode: 503, message: 'Instagram Account ID not configured' };
+    return id;
+  }
+
+  async publishInstagramMedia(caption: string, mediaUrl: string): Promise<{ id: string }> {
+    const token = getToken();
+    const igId = this.getInstagramId();
+    const isVideo = /\.(mp4|mov|avi|m4v)(\?|$)/i.test(mediaUrl);
+
+    // Step 1: Create media container
+    const containerParams: Record<string, string> = {
+      caption,
+      access_token: token,
+    };
+
+    if (isVideo) {
+      containerParams.media_type = 'REELS';
+      containerParams.video_url = mediaUrl;
+    } else {
+      containerParams.image_url = mediaUrl;
+    }
+
+    const { data: container } = await axios.post(`${GRAPH_API}/${igId}/media`, null, { params: containerParams });
+
+    // Step 2: Wait for video processing if needed
+    if (isVideo) {
+      await this.waitForIgMediaReady(container.id, token);
+    }
+
+    // Step 3: Publish
+    const { data: published } = await axios.post(`${GRAPH_API}/${igId}/media_publish`, null, {
+      params: { creation_id: container.id, access_token: token },
+    });
+
+    return published;
+  }
+
+  private async waitForIgMediaReady(containerId: string, token: string, maxWait = 120000): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+      const { data } = await axios.get(`${GRAPH_API}/${containerId}`, {
+        params: { fields: 'status_code', access_token: token },
+      });
+      if (data.status_code === 'FINISHED') return;
+      if (data.status_code === 'ERROR') throw new Error('Instagram media processing failed');
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+    throw new Error('Instagram media processing timeout');
+  }
+
+  async getPostEngagement(postId: string) {
+    const token = getToken();
+    const { data } = await axios.get(`${GRAPH_API}/${postId}`, {
+      params: {
+        fields: 'likes.summary(true),comments.summary(true),shares',
+        access_token: token,
+      },
+    });
+    return {
+      likes: data.likes?.summary?.total_count || 0,
+      comments: data.comments?.summary?.total_count || 0,
+      shares: data.shares?.count || 0,
+    };
+  }
 }
