@@ -104,7 +104,8 @@ app.post('/api/test/publish-now', async (_req, res) => {
     await prisma.scheduledPost.update({ where: { id: post.id }, data: { status: 'PUBLISHED', publishedAt: new Date() } });
     res.json({ success: true, fbPostId: result?.id, topic: post.topic, message: fullMessage.substring(0, 100) });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    const fbError = err.response?.data || err.message;
+    res.status(500).json({ success: false, error: err.message, fbDetail: fbError, imageUrl: (await prisma.scheduledPost.findFirst({ where: { status: 'APPROVED' }, orderBy: { createdAt: 'desc' } }))?.imageUrl });
   }
 });
 
