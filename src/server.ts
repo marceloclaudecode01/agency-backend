@@ -13,7 +13,6 @@ import authRoutes from './modules/auth/auth.routes';
 import dashboardRoutes from './modules/dashboard/dashboard.routes';
 import clientsRoutes from './modules/clients/clients.routes';
 import campaignsRoutes from './modules/campaigns/campaigns.routes';
-import analyticsRoutes from './modules/analytics/analytics.routes';
 import tasksRoutes from './modules/tasks/tasks.routes';
 import financeRoutes from './modules/finance/finance.routes';
 import reportsRoutes from './modules/reports/reports.routes';
@@ -21,11 +20,15 @@ import calendarRoutes from './modules/calendar/calendar.routes';
 import usersRoutes from './modules/users/users.routes';
 import socialRoutes from './modules/social/social.routes';
 import agentsRoutes from './modules/agents/agents.routes';
+import agentsGrowthRoutes from './modules/agents/agents-growth.routes';
 import productsRoutes from './modules/products/products.routes';
 import chatRoutes from './modules/chat/chat.routes';
+import aiChatRoutes from './modules/ai-chat/ai-chat.routes';
 import notificationsRoutes from './modules/notifications/notifications.routes';
 import { startAllAgents } from './agents/scheduler.agent';
 import { setAgentLoggerIo } from './agents/agent-logger';
+
+console.log('[Boot] Modules imported successfully');
 
 if (!process.env.JWT_SECRET) {
   throw new Error('FATAL: JWT_SECRET environment variable is not set');
@@ -68,48 +71,17 @@ app.use('/api/calendar', calendarRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/social', socialRoutes);
 app.use('/api/agents', agentsRoutes);
+app.use('/api/agents/growth', agentsGrowthRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/ai-chat', aiChatRoutes);
 app.use('/api/notifications', notificationsRoutes);
-app.use('/api/analytics', analyticsRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.2.0' });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.1.0' });
 });
 
-// Temporary test endpoint for motivational video (remove after testing)
-app.post('/api/test/motivational', async (_req, res) => {
-  try {
-    const { generateMotivationalVideo } = await import('./agents/motivational-video.agent');
-    await generateMotivationalVideo();
-    res.json({ success: true, message: 'Vídeo motivacional gerado e agendado' });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// Force publish now - bypasses scheduler wait
-app.post('/api/test/publish-now', async (_req, res) => {
-  try {
-    const { SocialService } = await import('./modules/social/social.service');
-    const socialService = new SocialService();
-    const post = await prisma.scheduledPost.findFirst({
-      where: { status: 'APPROVED' },
-      orderBy: { createdAt: 'desc' },
-    });
-    if (!post) return res.status(404).json({ success: false, error: 'Nenhum post APPROVED encontrado' });
-    const fullMessage = post.hashtags ? `${post.message}\n\n${post.hashtags}` : post.message;
-    const result = post.imageUrl
-      ? await socialService.publishMediaPost(fullMessage, post.imageUrl)
-      : await socialService.publishPost(fullMessage);
-    await prisma.scheduledPost.update({ where: { id: post.id }, data: { status: 'PUBLISHED', publishedAt: new Date() } });
-    res.json({ success: true, fbPostId: result?.id, topic: post.topic, message: fullMessage.substring(0, 100) });
-  } catch (err: any) {
-    const fbError = err.response?.data || err.message;
-    res.status(500).json({ success: false, error: err.message, fbDetail: fbError, imageUrl: (await prisma.scheduledPost.findFirst({ where: { status: 'APPROVED' }, orderBy: { createdAt: 'desc' } }))?.imageUrl });
-  }
-});
 
 // Error handler
 app.use(errorHandler);
@@ -167,22 +139,8 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {});
 });
 
-// Global error handlers - prevent crash
-process.on('uncaughtException', (err) => {
-  console.error('[CRITICAL] Uncaught Exception:', err.message);
-  import('./agents/agent-logger').then(({ agentLog }) => {
-    agentLog('Sistema', `🔴 Erro não capturado: ${err.message}`, { type: 'error' }).catch(() => {});
-  });
-});
-
-process.on('unhandledRejection', (reason: any) => {
-  console.error('[CRITICAL] Unhandled Rejection:', reason?.message || reason);
-  import('./agents/agent-logger').then(({ agentLog }) => {
-    agentLog('Sistema', `🔴 Promise rejeitada: ${reason?.message || reason}`, { type: 'error' }).catch(() => {});
-  });
-});
-
-httpServer.listen(PORT, () => {
+console.log('[Boot] About to listen on port', PORT);
+httpServer.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`Server running on http://localhost:${PORT}`);
   setAgentLoggerIo(io);
   startAllAgents();

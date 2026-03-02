@@ -228,23 +228,30 @@ enum ScheduledPostStatus {
 }
 
 model ScheduledPost {
-  id           String              @id @default(cuid())
-  topic        String
-  message      String
-  hashtags     String?
-  imageUrl     String?
-  scheduledFor DateTime
-  status       ScheduledPostStatus @default(PENDING)
-  publishedAt  DateTime?
-  retryCount   Int                 @default(0)
-  lastError    String?
-  platform     String[]            @default(["facebook"])
-  fbPostId     String?
-  igPostId     String?
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
-
-  performance  PostPerformance[]
+  id              String              @id @default(cuid())
+  topic           String
+  message         String
+  hashtags        String?
+  imageUrl        String?
+  platform        String?             @default("facebook")
+  scheduledFor    DateTime
+  status          ScheduledPostStatus @default(PENDING)
+  publishedAt     DateTime?
+  retryCount      Int                 @default(0)
+  timezone        String?
+  nativeScheduled Boolean             @default(false)
+  metaPostId      String?
+  source          String?
+  contentType     String?
+  governorDecision    String?
+  governorReason      String?
+  governorReviewedAt  DateTime?
+  qualityScore        Int?
+  abTestId            String?
+  viralScore          Int?
+  viralEnhancements   Json?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 
   @@map("scheduled_posts")
 }
@@ -254,6 +261,7 @@ model CommentLog {
   commentId String   @unique
   action    String
   reply     String
+  sentiment String?  // POSITIVE | NEUTRAL | NEGATIVE | CRISIS
   createdAt DateTime @default(now())
 
   @@map("comment_logs")
@@ -301,6 +309,28 @@ model ProductCampaign {
   @@map("product_campaigns")
 }
 
+model WeeklyStrategy {
+  id               String   @id @default(cuid())
+  weekStart        DateTime
+  maxPostsPerDay   Int      @default(5)
+  contentMix       Json
+  bestPostingHours Json
+  adjustmentReason String
+  createdAt        DateTime @default(now())
+
+  @@map("weekly_strategies")
+}
+
+model TrendingCache {
+  id          String   @id @default(cuid())
+  trends      Json
+  generatedAt DateTime
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@map("trending_cache")
+}
+
 model AgentLog {
   id        String   @id @default(cuid())
   from      String   // nome do agente que enviou
@@ -308,23 +338,281 @@ model AgentLog {
   type      String   // "info" | "action" | "result" | "error" | "communication"
   message   String
   payload   Json?    // dados extras opcionais
+  agentId   String?  // FK to Agent (optional, for future use)
   createdAt DateTime @default(now())
+
+  agent Agent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
 
   @@map("agent_logs")
 }
 
-model PostPerformance {
+// Phase 1: System Sentinel + Safe Mode
+model SystemConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("system_config")
+}
+
+// Phase 3: Feedback Loop de Performance
+model ContentPerformance {
   id              String   @id @default(cuid())
-  scheduledPostId String
-  platform        String   // "facebook" | "instagram"
+  postId          String
   likes           Int      @default(0)
   comments        Int      @default(0)
   shares          Int      @default(0)
-  reach           Int      @default(0)
-  engagementRate  Float    @default(0)
-  collectedAt     DateTime @default(now())
+  engagementScore Float    @default(0)
+  contentType     String?
+  topic           String?
+  publishedHour   Int?
+  createdAt       DateTime @default(now())
 
-  scheduledPost ScheduledPost @relation(fields: [scheduledPostId], references: [id], onDelete: Cascade)
+  @@map("content_performance")
+}
 
-  @@map("post_performances")
+// Phase 4: Brand Brain
+model BrandConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("brand_config")
+}
+
+// Epic 1: A/B Testing
+model ABTest {
+  id            String   @id @default(cuid())
+  originalTopic String
+  variantA      String   // ScheduledPost ID
+  variantB      String   // ScheduledPost ID
+  status        String   @default("RUNNING") // RUNNING | COMPLETED | CANCELLED
+  winnerId      String?  // ID do post vencedor
+  winnerReason  String?
+  scoreA        Float    @default(0)
+  scoreB        Float    @default(0)
+  measuredAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("ab_tests")
+}
+
+// Epic 2: Content Replicas (multi-formato)
+model ContentReplica {
+  id              String   @id @default(cuid())
+  originalPostId  String
+  format          String   // carousel | story | video_script | email | thread | ad_copy
+  platform        String   // facebook | instagram | tiktok | youtube | email
+  content         String   // texto principal
+  slides          Json?    // array de slides (para carousel)
+  metadata        Json?    // dados extras (duração, dimensões, etc)
+  status          String   @default("DRAFT") // DRAFT | READY | PUBLISHED
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("content_replicas")
+}
+
+// Epic 1: Reputation Monitor
+model ReputationEvent {
+  id        String   @id @default(cuid())
+  type      String   // NEGATIVE_FEEDBACK | HIDE | REPORT | ENGAGEMENT_DROP | UNLIKE
+  severity  String   @default("LOW") // LOW | MEDIUM | HIGH | CRITICAL
+  details   String
+  actionTaken String?
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("reputation_events")
+}
+
+// Epic 3: Lead Acquisition + CRM
+model Lead {
+  id          String   @id @default(cuid())
+  name        String?
+  source      String   // comment | dm | form | manual
+  sourceId    String?  // comment ID or post ID
+  email       String?
+  phone       String?
+  stage       String   @default("NEW") // NEW | CONTACTED | QUALIFIED | PROPOSAL | WON | LOST
+  score       Int      @default(0)
+  notes       String?
+  lastContact DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  interactions LeadInteraction[]
+
+  @@map("leads")
+}
+
+model LeadInteraction {
+  id        String   @id @default(cuid())
+  leadId    String
+  type      String   // comment_reply | dm | email | call | note
+  content   String
+  direction String   @default("OUTBOUND") // INBOUND | OUTBOUND
+  createdAt DateTime @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("lead_interactions")
+}
+
+// Epic 4: Monetization Engine
+model Funnel {
+  id          String   @id @default(cuid())
+  name        String
+  type        String   // awareness | consideration | conversion | retention
+  steps       Json     // array of step objects
+  conversionRate Float @default(0)
+  status      String   @default("ACTIVE") // ACTIVE | PAUSED | ARCHIVED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  offers Offer[]
+
+  @@map("funnels")
+}
+
+model Offer {
+  id          String   @id @default(cuid())
+  funnelId    String?
+  name        String
+  type        String   // product | service | lead_magnet | upsell
+  price       Float?
+  description String?
+  ctaUrl      String?
+  conversions Int      @default(0)
+  impressions Int      @default(0)
+  revenue     Float    @default(0)
+  status      String   @default("ACTIVE") // ACTIVE | PAUSED | ARCHIVED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  funnel Funnel? @relation(fields: [funnelId], references: [id], onDelete: SetNull)
+
+  @@map("offers")
+}
+
+// Epic 5: Strategic Command AI
+model StrategicPlan {
+  id              String   @id @default(cuid())
+  period          String   // "2026-03" format
+  goals           Json     // array of goal objects
+  tactics         Json     // array of tactic objects
+  kpis            Json     // key metrics to track
+  budgetAlloc     Json?    // budget allocation per channel
+  competitorNotes String?
+  status          String   @default("ACTIVE") // ACTIVE | SUPERSEDED
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("strategic_plans")
+}
+
+// Epic 6: Market Intelligence
+model MarketIntel {
+  id        String   @id @default(cuid())
+  type      String   // competitor | trend | opportunity | threat
+  title     String
+  summary   String
+  details   Json?
+  source    String?  // web | social | manual
+  relevance Int      @default(5) // 1-10
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@map("market_intel")
+}
+
+// Epic 7: Niche Learning Engine
+model AudienceInsight {
+  id          String   @id @default(cuid())
+  category    String   // demographics | behavior | preference | pain_point | desire
+  insight     String
+  confidence  Float    @default(0.5) // 0-1
+  dataPoints  Int      @default(1)
+  lastUpdated DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@map("audience_insights")
+}
+
+// Epic 8: Paid Traffic War Machine
+model AdCampaign {
+  id            String   @id @default(cuid())
+  name          String
+  platform      String   @default("meta") // meta | google | tiktok
+  objective     String   // awareness | traffic | conversions | leads
+  budget        Float    @default(0)
+  spent         Float    @default(0)
+  status        String   @default("DRAFT") // DRAFT | ACTIVE | PAUSED | COMPLETED
+  metaCampaignId String?
+  startDate     DateTime?
+  endDate       DateTime?
+  results       Json?    // impressions, clicks, conversions, cpa, roas
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  creatives AdCreative[]
+
+  @@map("ad_campaigns")
+}
+
+model AdCreative {
+  id           String   @id @default(cuid())
+  campaignId   String
+  type         String   // image | video | carousel | story
+  headline     String
+  body         String
+  ctaText      String?
+  mediaUrl     String?
+  performance  Json?    // ctr, cpc, conversions
+  status       String   @default("DRAFT") // DRAFT | ACTIVE | PAUSED
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  campaign AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@map("ad_creatives")
+}
+
+// Agent Registry (persistent, single source of truth)
+model Agent {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  function        String   // maps to AGENT_FUNCTION_MAP key
+  description     String?  // specialty
+  status          String   @default("active") // active | paused | error
+  autonomyLevel   Int      @default(5) // 1=interactive, 3=supervised, 5=full
+  cronExpression  String?  // null = on-demand/inline
+  lastRunAt       DateTime?
+  errorCount      Int      @default(0)
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  logs AgentLog[]
+
+  @@map("agents")
+}
+
+// Phase 8: Content Campaigns
+model ContentCampaign {
+  id           String   @id @default(cuid())
+  name         String
+  type         String   // "seasonal" | "launch" | "awareness" | "engagement"
+  startDate    DateTime
+  endDate      DateTime
+  priority     Int      @default(5)
+  contentRules Json     // { requiredTopics, forbiddenTopics, toneOverride, etc }
+  status       String   @default("ACTIVE") // ACTIVE | PAUSED | COMPLETED
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("content_campaigns")
 }

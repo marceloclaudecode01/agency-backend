@@ -1,12 +1,32 @@
 import { askGemini } from './gemini';
-import { getTopPerformingPosts } from './performance-collector.agent';
+import { getBrandContext } from './brand-brain.agent';
 
 const PAGE_CONTEXT = `
-Você é o agente de conteúdo da página "NewPlay Tv Online" no Facebook.
-A página é sobre entretenimento, TV online, streaming e cultura pop.
-Tom: descontraído, animado, próximo do público, use emojis com moderação.
-Público: brasileiros que gostam de entretenimento, filmes, séries e TV ao vivo.
-IMPORTANTE: Gere conteúdo em português do Brasil.
+Você é o agente de conteúdo de uma página de ALTO CRESCIMENTO no Facebook.
+OBJETIVO: Criar conteúdo viral que gere compartilhamentos, comentários e salvamentos.
+
+REGRAS ABSOLUTAS:
+- NÃO produzir conteúdo sobre streamers, filmes, séries ou entretenimento genérico.
+- Focar em: dicas práticas, insights poderosos, tendências, conhecimento útil, provocações inteligentes.
+- Cada post DEVE entregar valor real ao leitor.
+- Tom: inteligente, direto, humano, alternando entre educativo, inspirador e provocativo.
+- Público: brasileiros que buscam crescimento, conhecimento e conteúdo que vale compartilhar.
+- SEMPRE em português do Brasil.
+
+FORMATOS DE ALTO ALCANCE (priorizar):
+- Listas numeradas (ex: "5 coisas que...")
+- Perguntas provocativas que geram debate
+- Dicas práticas aplicáveis imediatamente
+- Fatos surpreendentes / curiosidades
+- Mini tutoriais em texto
+- Conteúdo "salvável" (checklists, resumos)
+
+GATILHOS DE ENGAJAMENTO (usar sempre):
+- Perguntas abertas no final
+- "Marca alguém que precisa ver isso"
+- "Salva pra não esquecer"
+- "Concorda ou discorda?"
+- Pedir opinião / experiência pessoal
 `;
 
 export interface GeneratedPost {
@@ -14,29 +34,37 @@ export interface GeneratedPost {
   hashtags: string[];
   suggestedTime: string;
   topic: string;
+  contentCategory: string;
 }
 
 export async function generatePost(topic: string, extraContext?: string): Promise<GeneratedPost> {
+  let brandCtx = '';
+  try { brandCtx = await getBrandContext(); } catch {}
+
   const prompt = `
 ${PAGE_CONTEXT}
+${brandCtx}
 
 Crie um post para o Facebook sobre o seguinte tema: "${topic}"
 ${extraContext ? `Contexto adicional: ${extraContext}` : ''}
 
 Retorne APENAS um JSON válido neste formato exato:
 {
-  "message": "texto do post aqui (sem hashtags, máx 300 caracteres)",
+  "message": "texto do post aqui (sem hashtags, máx 500 caracteres, use quebras de linha para legibilidade)",
   "hashtags": ["hashtag1", "hashtag2", "hashtag3", "hashtag4", "hashtag5"],
   "suggestedTime": "HH:MM",
-  "topic": "${topic}"
+  "topic": "${topic}",
+  "contentCategory": "educativo|engajamento|autoridade|bastidores"
 }
 
 Regras:
-- A mensagem deve ser envolvente e gerar engajamento
-- Inclua uma chamada para ação (curta, compartilhe, comente)
-- As hashtags devem ser relevantes e populares em português
-- O horário sugerido deve ser entre 18:00 e 22:00 (horário nobre)
-- Não inclua as hashtags na mensagem, elas ficam separadas
+- A mensagem DEVE ser envolvente, original e entregar valor real
+- Use quebras de linha (\\n) para formatar bem o texto
+- SEMPRE termine com uma chamada para ação que gere interação
+- As hashtags devem ser populares e relevantes em português
+- O horário sugerido deve ser entre 08:00 e 22:00
+- Não inclua as hashtags na mensagem
+- NÃO fale sobre filmes, séries, streaming ou TV
 `;
 
   const raw = await askGemini(prompt);
@@ -51,45 +79,53 @@ export async function generatePostFromStrategy(
   recentTopics: string[]
 ): Promise<GeneratedPost> {
   const focusInstructions: Record<string, string> = {
-    entretenimento: 'Tom leve e divertido. Compartilhe algo que vai entreter o público.',
-    engajamento: 'Faça uma pergunta ou crie uma enquete. O objetivo é gerar comentários e interação.',
-    novidade: 'Apresente uma novidade ou tendência. Tone informativo mas animado.',
-    cta: 'Direcione o público para o link na bio. A chamada para ação deve ser clara: "acesse o link na bio", "clique no link da bio" ou variação criativa.',
+    educativo: 'Ensine algo prático e aplicável. Dica, tutorial, checklist ou "como fazer". O leitor deve sair sabendo algo novo.',
+    engajamento: 'Faça uma pergunta provocativa, crie debate, peça opinião. Objetivo: máximo de comentários e compartilhamentos.',
+    autoridade: 'Mostre expertise com dados, análise inteligente, tendência ou estudo de caso. Posicione como referência.',
+    bastidores: 'Humanize com bastidores, aprendizado pessoal, processo, desafio superado ou história real. Conexão emocional.',
+    novidade: 'Apresente uma tendência quente, novidade útil ou fato surpreendente. Tom informativo mas empolgante.',
+    cta: 'Crie conteúdo tão bom que o leitor queira compartilhar. Inclua "marca alguém" ou "salva pra depois".',
   };
 
-  const focusGuide = focusInstructions[focusType] || focusInstructions['entretenimento'];
+  const focusGuide = focusInstructions[focusType] || focusInstructions['educativo'];
   const recentStr = recentTopics.length > 0 ? recentTopics.join(', ') : 'nenhum';
 
-  // Get top performing posts for context
-  let performanceContext = '';
-  try {
-    const topPosts = await getTopPerformingPosts(5);
-    if (topPosts.length > 0) {
-      performanceContext = `\nPosts que tiveram MELHOR engajamento recentemente:\n${topPosts.map((p) => `- "${p.topic}" (${p.likes} likes)`).join('\n')}\nUse energia/estilo similar ao que funciona.\n`;
-    }
-  } catch {}
+  let brandCtx = '';
+  try { brandCtx = await getBrandContext(); } catch {}
 
   const prompt = `
 ${PAGE_CONTEXT}
+${brandCtx}
+
+INSTRUÇÃO DE FORMATO: Varie SEMPRE o formato. Alterne entre:
+- Lista numerada
+- Pergunta provocativa
+- Dica prática direta
+- Fato surpreendente + análise
+- Mini tutorial passo a passo
+- Opinião controversa (polêmica leve e inteligente)
 
 Crie um post para o Facebook sobre o tema: "${topic}"
 Tipo de foco: ${focusType} — ${focusGuide}
-${performanceContext}
+
 IMPORTANTE: NÃO repita esses temas recentes: ${recentStr}
+PROIBIDO: Falar sobre filmes, séries, streaming, TV, streamers.
 
 Retorne APENAS um JSON válido neste formato exato:
 {
-  "message": "texto do post aqui (sem hashtags, máx 300 caracteres)",
+  "message": "texto do post aqui (sem hashtags, máx 500 caracteres, use \\n para quebras de linha)",
   "hashtags": ["hashtag1", "hashtag2", "hashtag3", "hashtag4", "hashtag5"],
   "suggestedTime": "HH:MM",
-  "topic": "${topic}"
+  "topic": "${topic}",
+  "contentCategory": "${focusType}"
 }
 
 Regras:
-- A mensagem deve ser envolvente e original
-- Aplique o foco "${focusType}" conforme instruído
-- As hashtags devem ser relevantes e populares em português
-- O horário sugerido deve ser entre 12:00 e 22:00
+- A mensagem DEVE ser envolvente, original e viral
+- Use formatação com quebras de linha para facilitar leitura
+- SEMPRE inclua CTA que estimule interação (pergunta, marca alguém, salva)
+- As hashtags devem ser populares em português
+- Horário sugerido entre 08:00 e 22:00
 - Não inclua as hashtags na mensagem
 `;
 
@@ -100,24 +136,37 @@ Regras:
 }
 
 export async function generateWeeklyPlan(focus: string): Promise<GeneratedPost[]> {
+  let brandCtx = '';
+  try { brandCtx = await getBrandContext(); } catch {}
+
   const prompt = `
 ${PAGE_CONTEXT}
+${brandCtx}
 
-Crie um plano de 7 posts para a semana sobre o tema geral: "${focus}"
-Cada dia deve ter um ângulo diferente e criativo.
+Crie um plano de 7 posts para a semana com foco geral em: "${focus}"
+
+DISTRIBUIÇÃO OBRIGATÓRIA na semana:
+- 3 posts educativos (dicas, tutoriais, checklists)
+- 2 posts de engajamento (perguntas, debates, enquetes)
+- 1 post de autoridade (dados, análise, tendência)
+- 1 post de bastidores (humanização, história, processo)
+
+Cada dia DEVE ter ângulo, formato e tom DIFERENTES.
 
 Retorne APENAS um JSON válido neste formato:
 [
   {
-    "message": "texto do post",
+    "message": "texto do post (use \\n para quebras de linha)",
     "hashtags": ["tag1", "tag2", "tag3"],
     "suggestedTime": "19:00",
-    "topic": "tema específico do dia"
+    "topic": "tema específico do dia",
+    "contentCategory": "educativo|engajamento|autoridade|bastidores"
   }
 ]
 
-Gere exatamente 7 objetos no array, um para cada dia da semana.
-Varie os horários entre 18:00 e 22:00.
+Gere exatamente 7 objetos no array, um para cada dia.
+Varie os horários entre 08:00 e 22:00.
+NÃO fale sobre filmes, séries, streaming ou TV.
 `;
 
   const raw = await askGemini(prompt);

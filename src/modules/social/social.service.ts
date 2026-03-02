@@ -1,17 +1,24 @@
 import axios from 'axios';
+import fs from 'fs';
+import FormData from 'form-data';
 
 const GRAPH_API = 'https://graph.facebook.com/v19.0';
 
 type PublishOptions = {
   scheduledTime?: string;
   linkUrl?: string | null;
+  platform?: 'facebook' | 'instagram' | 'both';
 };
 
 type PublishMediaOptions = PublishOptions & {
   mediaType?: 'image' | 'video' | null;
 };
 
-function getToken() {
+// Cache do Page Token para não converter a cada request
+let cachedPageToken: string | null = null;
+let pageTokenExpiresAt = 0;
+
+function getUserToken() {
   const token = (process.env.FACEBOOK_ACCESS_TOKEN || '').trim();
   if (!token || token === 'cole_seu_novo_token_aqui') {
     throw { statusCode: 503, message: 'Facebook token not configured' };
@@ -27,9 +34,42 @@ function getPageId() {
   return id;
 }
 
+async function getPageToken(): Promise<string> {
+  // Cache válido por 1h
+  if (cachedPageToken && Date.now() < pageTokenExpiresAt) {
+    return cachedPageToken;
+  }
+
+  const userToken = getUserToken();
+  const pageId = getPageId();
+
+  try {
+    const { data } = await axios.get(`${GRAPH_API}/${pageId}`, {
+      params: { fields: 'access_token', access_token: userToken },
+    });
+
+    if (data.access_token) {
+      cachedPageToken = data.access_token;
+      pageTokenExpiresAt = Date.now() + 60 * 60 * 1000;
+      console.log('[SocialService] Page token obtained successfully');
+      return data.access_token as string;
+    }
+  } catch (err: any) {
+    console.warn('[SocialService] Could not get page token, falling back to user token:', err.response?.data?.error?.message || err.message);
+  }
+
+  // Fallback: o token configurado já pode ser um Page Token
+  return userToken;
+}
+
+// Leitura (GET) usa user token direto, escrita (POST/DELETE) usa page token
+function getReadToken() {
+  return getUserToken();
+}
+
 export class SocialService {
   async getPageInfo() {
-    const token = getToken();
+    const token = getReadToken();
     const pageId = getPageId();
     const { data } = await axios.get(`${GRAPH_API}/${pageId}`, {
       params: {
@@ -41,7 +81,7 @@ export class SocialService {
   }
 
   async getPageInsights(period: 'day' | 'week' | 'month' = 'month') {
-    const token = getToken();
+    const token = getReadToken();
     const pageId = getPageId();
 
     const metrics = [
@@ -74,7 +114,7 @@ export class SocialService {
   }
 
   async getPosts(limit = 10) {
-    const token = getToken();
+    const token = getReadToken();
     const pageId = getPageId();
     try {
       const { data } = await axios.get(`${GRAPH_API}/${pageId}/posts`, {
@@ -111,7 +151,7 @@ export class SocialService {
   }
 
   async publishPost(message: string, options?: PublishOptions) {
-    const token = getToken();
+    const token = await getPageToken();
     const pageId = getPageId();
 
     const finalMessage = this.buildMessageWithLink(message, options?.linkUrl);
@@ -122,7 +162,7 @@ export class SocialService {
   }
 
   async publishPhotoPost(message: string, imageUrl: string, options?: PublishOptions) {
-    const token = getToken();
+    const token = await getPageToken();
     const pageId = getPageId();
 
     const finalCaption = this.buildMessageWithLink(message, options?.linkUrl);
@@ -140,7 +180,7 @@ export class SocialService {
   }
 
   async publishVideoPost(message: string, videoUrl: string, options?: PublishOptions) {
-    const token = getToken();
+    const token = await getPageToken();
     const pageId = getPageId();
 
     const finalDescription = this.buildMessageWithLink(message, options?.linkUrl);
@@ -173,7 +213,7 @@ export class SocialService {
   }
 
   async getScheduledPosts() {
-    const token = getToken();
+    const token = getReadToken();
     const pageId = getPageId();
     const { data } = await axios.get(`${GRAPH_API}/${pageId}/scheduled_posts`, {
       params: {
@@ -185,7 +225,7 @@ export class SocialService {
   }
 
   async deletePost(postId: string) {
-    const token = getToken();
+    const token = await getPageToken();
     const { data } = await axios.delete(`${GRAPH_API}/${postId}`, {
       params: { access_token: token },
     });
@@ -193,7 +233,7 @@ export class SocialService {
   }
 
   async getPostComments(postId: string) {
-    const token = getToken();
+    const token = getReadToken();
     const { data } = await axios.get(`${GRAPH_API}/${postId}/comments`, {
       params: {
         fields: 'id,message,from,created_time,like_count',
@@ -204,10 +244,28 @@ export class SocialService {
   }
 
   async replyToComment(commentId: string, message: string): Promise<void> {
-    const token = getToken();
+    const token = await getPageToken();
     await axios.post(`${GRAPH_API}/${commentId}/comments`, null, {
       params: { message, access_token: token },
     });
+  }
+
+  async publishVideoFromFile(message: string, filePath: string) {
+    const token = await getPageToken();
+    const pageId = getPageId();
+
+    const form = new FormData();
+    form.append('source', fs.createReadStream(filePath));
+    form.append('description', message);
+    form.append('access_token', token);
+
+    const { data } = await axios.post(`${GRAPH_API}/${pageId}/videos`, form, {
+      headers: form.getHeaders(),
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+      timeout: 120000,
+    });
+    return data;
   }
 
   async checkConnection() {
@@ -219,72 +277,4 @@ export class SocialService {
     }
   }
 
-  // --- Instagram Methods (Meta Graph API) ---
-
-  private getInstagramId() {
-    const id = process.env.INSTAGRAM_ACCOUNT_ID;
-    if (!id) throw { statusCode: 503, message: 'Instagram Account ID not configured' };
-    return id;
-  }
-
-  async publishInstagramMedia(caption: string, mediaUrl: string): Promise<{ id: string }> {
-    const token = getToken();
-    const igId = this.getInstagramId();
-    const isVideo = /\.(mp4|mov|avi|m4v)(\?|$)/i.test(mediaUrl);
-
-    // Step 1: Create media container
-    const containerParams: Record<string, string> = {
-      caption,
-      access_token: token,
-    };
-
-    if (isVideo) {
-      containerParams.media_type = 'REELS';
-      containerParams.video_url = mediaUrl;
-    } else {
-      containerParams.image_url = mediaUrl;
-    }
-
-    const { data: container } = await axios.post(`${GRAPH_API}/${igId}/media`, null, { params: containerParams });
-
-    // Step 2: Wait for video processing if needed
-    if (isVideo) {
-      await this.waitForIgMediaReady(container.id, token);
-    }
-
-    // Step 3: Publish
-    const { data: published } = await axios.post(`${GRAPH_API}/${igId}/media_publish`, null, {
-      params: { creation_id: container.id, access_token: token },
-    });
-
-    return published;
-  }
-
-  private async waitForIgMediaReady(containerId: string, token: string, maxWait = 120000): Promise<void> {
-    const start = Date.now();
-    while (Date.now() - start < maxWait) {
-      const { data } = await axios.get(`${GRAPH_API}/${containerId}`, {
-        params: { fields: 'status_code', access_token: token },
-      });
-      if (data.status_code === 'FINISHED') return;
-      if (data.status_code === 'ERROR') throw new Error('Instagram media processing failed');
-      await new Promise((r) => setTimeout(r, 5000));
-    }
-    throw new Error('Instagram media processing timeout');
-  }
-
-  async getPostEngagement(postId: string) {
-    const token = getToken();
-    const { data } = await axios.get(`${GRAPH_API}/${postId}`, {
-      params: {
-        fields: 'likes.summary(true),comments.summary(true),shares',
-        access_token: token,
-      },
-    });
-    return {
-      likes: data.likes?.summary?.total_count || 0,
-      comments: data.comments?.summary?.total_count || 0,
-      shares: data.shares?.count || 0,
-    };
-  }
 }

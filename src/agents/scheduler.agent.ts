@@ -3,15 +3,30 @@ import prisma from '../config/database';
 import { SocialService } from '../modules/social/social.service';
 import { generateCommentReply } from './comment-responder.agent';
 import { analyzeMetrics } from './metrics-analyzer.agent';
+import { generateImageForPost } from './image-generator.agent';
 import { notificationsService } from '../modules/notifications/notifications.service';
 import { buildDailyStrategy } from './content-strategist.agent';
 import { generatePostFromStrategy } from './content-creator.agent';
 import { analyzeTrendingTopics } from './trending-topics.agent';
 import { orchestrateProductPosts } from './product-orchestrator.agent';
 import { runTokenMonitor } from './token-monitor.agent';
-import { generateMotivationalVideo } from './motivational-video.agent';
-import { collectPostPerformance } from './performance-collector.agent';
+import { generateVideoForPost } from './video-generator.agent';
 import { agentLog } from './agent-logger';
+import { startContentGovernor } from './content-governor.agent';
+import { startGrowthDirector } from './growth-director.agent';
+import { startSystemSentinel } from './system-sentinel.agent';
+import { startPerformanceLearner } from './performance-learner.agent';
+import { isSafeModeActive, isAgentPaused } from './safe-mode';
+import { seedBrandConfig } from './brand-brain.agent';
+import { enhanceWithViralMechanics } from './viral-mechanics.agent';
+import { createABVariant, startABTestingEngine } from './ab-testing-engine.agent';
+import { startReputationMonitor } from './reputation-monitor.agent';
+import { startLeadCaptureAgent } from './lead-capture.agent';
+import { startMonetizationEngine } from './monetization-engine.agent';
+import { startStrategicCommandAgent } from './strategic-command.agent';
+import { startMarketIntelligenceAgent } from './market-intelligence.agent';
+import { startNicheLearningAgent } from './niche-learning.agent';
+import { startPaidTrafficAgent } from './paid-traffic.agent';
 
 const socialService = new SocialService();
 
@@ -45,10 +60,22 @@ export function startPostScheduler() {
   cron.schedule('*/5 * * * *', async () => {
     let pendingPosts: Awaited<ReturnType<typeof prisma.scheduledPost.findMany>> = [];
     try {
+      // Phase 1: Safe mode check
+      if (await isSafeModeActive() || await isAgentPaused('Scheduler')) {
+        return;
+      }
+
       const now = new Date();
 
       pendingPosts = await prisma.scheduledPost.findMany({
-        where: { status: 'APPROVED', scheduledFor: { lte: now } },
+        where: {
+          status: 'APPROVED',
+          scheduledFor: { lte: now },
+          OR: [
+            { governorDecision: 'APPROVE' },
+            { governorDecision: null, source: null }, // backward compat: manual posts
+          ],
+        },
         orderBy: { scheduledFor: 'asc' },
         take: 1,
       });
@@ -72,43 +99,49 @@ export function startPostScheduler() {
 
       const post = pendingPosts[0];
 
-      // Skip posts in backoff period
-      if (post.retryCount > 0) {
-        const backoffMinutes = post.retryCount * 15;
-        const timeSinceLastTry = (now.getTime() - post.updatedAt.getTime()) / (1000 * 60);
-        if (timeSinceLastTry < backoffMinutes) return;
+      // Skip natively scheduled posts (Meta handles them)
+      if ((post as any).nativeScheduled) {
+        return;
       }
 
       await agentLog('Scheduler', `Post encontrado para publicação: "${post.topic || post.message.substring(0, 50)}"`, { type: 'action', to: 'Facebook API' });
 
       const fullMessage = post.hashtags ? `${post.message}\n\n${post.hashtags}` : post.message;
 
-      // Publish to Facebook
-      let fbPostId: string | null = null;
-      const publishResult = post.imageUrl
-        ? await socialService.publishMediaPost(fullMessage, post.imageUrl)
-        : await socialService.publishPost(fullMessage);
-      fbPostId = publishResult?.id || null;
+      let publishResult: any;
 
-      await prisma.scheduledPost.update({ where: { id: post.id }, data: { status: 'PUBLISHED', publishedAt: now, fbPostId } });
+      if (post.contentType === 'video') {
+        // Generate and upload video
+        try {
+          await agentLog('Scheduler', `🎬 Gerando vídeo para: "${post.topic || 'post'}"`, { type: 'action' });
+          const { videoPath, cleanup } = await generateVideoForPost(
+            post.topic || 'conteúdo',
+            'engajamento'
+          );
+          try {
+            publishResult = await socialService.publishVideoFromFile(fullMessage, videoPath);
+          } finally {
+            cleanup();
+          }
+          await agentLog('Scheduler', '✅ Vídeo publicado no Facebook!', { type: 'result' });
+        } catch (videoErr: any) {
+          await agentLog('Scheduler', `⚠️ Falha no vídeo: ${videoErr.message}. Publicando como imagem.`, { type: 'error' });
+          publishResult = post.imageUrl
+            ? await socialService.publishMediaPost(fullMessage, post.imageUrl)
+            : await socialService.publishPost(fullMessage);
+        }
+      } else {
+        publishResult = post.imageUrl
+          ? await socialService.publishMediaPost(fullMessage, post.imageUrl)
+          : await socialService.publishPost(fullMessage);
+      }
+
+      const fbPostId = publishResult?.id || null;
+
+      await prisma.scheduledPost.update({ where: { id: post.id }, data: { status: 'PUBLISHED', publishedAt: now } });
 
       if (fbPostId) {
         await prisma.productCampaign.updateMany({ where: { scheduledPostId: post.id }, data: { status: 'PUBLISHED', fbPostId } });
-      }
-
-      // Cross-post to Instagram if enabled
-      if (post.platform.includes('instagram') && process.env.INSTAGRAM_ACCOUNT_ID) {
-        try {
-          const igResult = post.imageUrl
-            ? await socialService.publishInstagramMedia(fullMessage, post.imageUrl)
-            : null;
-          if (igResult?.id) {
-            await prisma.scheduledPost.update({ where: { id: post.id }, data: { igPostId: igResult.id } });
-            await agentLog('Scheduler', `✅ Post publicado no Instagram! ID: ${igResult.id}`, { type: 'result', payload: { igPostId: igResult.id } });
-          }
-        } catch (igErr: any) {
-          await agentLog('Scheduler', `⚠️ Instagram falhou (FB ok): ${igErr.message}`, { type: 'error' });
-        }
       }
 
       await agentLog('Scheduler', `✅ Post publicado no Facebook com sucesso! ID: ${fbPostId || 'N/A'}`, { type: 'result', payload: { topic: post.topic, fbPostId } });
@@ -122,26 +155,23 @@ export function startPostScheduler() {
         (err.message && (err.message.includes('pages_manage_posts') || err.message.includes('pages_read_engagement') || err.message.includes('#200')));
 
       if (isPermissionError) {
-        console.error('[Scheduler] ⚠️ Token sem permissão pages_manage_posts.');
-        await agentLog('Scheduler', '⚠️ Token sem permissão de publicação. Posts marcados como FAILED.', { type: 'error' });
+        console.error('[Scheduler] ⚠️ Token sem permissão pages_manage_posts. Configure um Page Access Token com as permissões corretas no Facebook Developer.');
+        await agentLog('Scheduler', '⚠️ Token sem permissão de publicação (pages_manage_posts). Posts marcados como FAILED. Atualize o token no Railway.', { type: 'error' });
+        // Mark all pending posts as FAILED to stop retrying
         try {
-          await prisma.scheduledPost.updateMany({ where: { status: 'APPROVED' }, data: { status: 'FAILED' } });
+          await prisma.scheduledPost.updateMany({
+            where: { status: 'APPROVED' },
+            data: { status: 'FAILED' },
+          });
         } catch {}
         return;
       }
 
-      // Retry logic: up to 3 attempts with backoff
-      const post = pendingPosts[0];
-      if (post) {
-        const newRetryCount = (post.retryCount || 0) + 1;
-        if (newRetryCount >= 3) {
-          await prisma.scheduledPost.update({ where: { id: post.id }, data: { status: 'FAILED', retryCount: newRetryCount, lastError: err.message } });
-          await agentLog('Scheduler', `❌ Post falhou após ${newRetryCount} tentativas: ${err.message}`, { type: 'error' });
-        } else {
-          await prisma.scheduledPost.update({ where: { id: post.id }, data: { retryCount: newRetryCount, lastError: err.message } });
-          await agentLog('Scheduler', `⚠️ Tentativa ${newRetryCount}/3 falhou. Retry em ${newRetryCount * 15}min: ${err.message}`, { type: 'info' });
-        }
-      }
+      console.error('[Scheduler] Erro ao publicar post:', err.message);
+      await agentLog('Scheduler', `❌ Erro ao publicar post: ${err.message}`, { type: 'error' });
+      try {
+        await prisma.scheduledPost.update({ where: { id: pendingPosts[0]?.id }, data: { status: 'FAILED' } });
+      } catch {}
     }
   });
 
@@ -205,8 +235,32 @@ export function startCommentResponder() {
             reply = await generateCommentReply(comment.message, post.message || post.story);
           }
 
+          // Phase 5: Sentiment analysis before replying
+          let sentiment: string | null = null;
+          try {
+            const { askGemini: askGeminiSentiment } = await import('./gemini');
+            const sentimentRaw = await askGeminiSentiment(`Classifique o sentimento deste comentário em uma palavra: POSITIVE, NEUTRAL, NEGATIVE ou CRISIS.
+Comentário: "${comment.message.substring(0, 200)}"
+Retorne APENAS a classificação.`);
+            const cleaned = sentimentRaw.trim().toUpperCase();
+            if (['POSITIVE', 'NEUTRAL', 'NEGATIVE', 'CRISIS'].includes(cleaned)) {
+              sentiment = cleaned;
+            }
+          } catch {}
+
+          // Phase 5: CRISIS — don't auto-reply, alert admin
+          if (sentiment === 'CRISIS') {
+            await prisma.commentLog.create({ data: { commentId: comment.id, action: 'CRISIS_HOLD', reply: '', sentiment } });
+            await agentLog('Comment Responder', `🚨 CRISE detectada: "${comment.message.substring(0, 60)}" — resposta suspensa, admin notificado`, { type: 'error' });
+            const crisisAdmins = await prisma.user.findMany({ where: { role: 'ADMIN' } });
+            for (const admin of crisisAdmins) {
+              await notificationsService.createAndEmit(admin.id, 'TASK_ASSIGNED', 'CRISE: Comentário negativo', `Comentário de crise detectado: "${comment.message.substring(0, 100)}". Responda manualmente.`);
+            }
+            continue;
+          }
+
           if (!reply) {
-            await prisma.commentLog.create({ data: { commentId: comment.id, action: 'IGNORED', reply: '' } });
+            await prisma.commentLog.create({ data: { commentId: comment.id, action: 'IGNORED', reply: '', sentiment } });
             continue;
           }
 
@@ -214,10 +268,10 @@ export function startCommentResponder() {
             await socialService.replyToComment(comment.id, reply);
           } catch (replyErr: any) {
             await agentLog('Comment Responder', `⚠️ Não foi possível responder comentário: ${replyErr.message}`, { type: 'info' });
-            await prisma.commentLog.create({ data: { commentId: comment.id, action: 'FAILED', reply } });
+            await prisma.commentLog.create({ data: { commentId: comment.id, action: 'FAILED', reply, sentiment } });
             continue;
           }
-          await prisma.commentLog.create({ data: { commentId: comment.id, action: 'REPLIED', reply } });
+          await prisma.commentLog.create({ data: { commentId: comment.id, action: 'REPLIED', reply, sentiment } });
           repliedCount++;
 
           await agentLog('Comment Responder', `✅ Respondido: "${comment.message.substring(0, 40)}" → "${reply.substring(0, 40)}"`, { type: 'result' });
@@ -341,6 +395,37 @@ export function startAutonomousContentEngine() {
           const generated = await generatePostFromStrategy(topic, focusType, recentTopics);
           await agentLog('Content Creator', `Post criado: "${generated.message.substring(0, 60)}..."`, { type: 'result', to: 'Autonomous Engine' });
 
+          // Viral Mechanics Lab: enhance post before scheduling
+          let viralScore: number | null = null;
+          let viralEnhancements: any = null;
+          try {
+            await agentLog('Autonomous Engine', `Aplicando Viral Mechanics em "${topic}"...`, { type: 'communication', to: 'Viral Mechanics' });
+            const enhanced = await enhanceWithViralMechanics(generated.message, topic, focusType);
+            if (enhanced.viralScore > 5) {
+              generated.message = enhanced.enhancedMessage;
+              viralScore = enhanced.viralScore;
+              viralEnhancements = {
+                techniques: enhanced.appliedTechniques,
+                hookType: enhanced.hookType,
+                emotionalTrigger: enhanced.emotionalTrigger,
+              };
+              await agentLog('Viral Mechanics', `Post enhanced: score ${enhanced.viralScore}/10, hook: ${enhanced.hookType}`, { type: 'result', to: 'Autonomous Engine' });
+            }
+          } catch (viralErr: any) {
+            await agentLog('Viral Mechanics', `⚠️ Enhancement falhou: ${viralErr.message}`, { type: 'error' });
+          }
+
+          // Generate image for every post
+          let imageUrl: string | null = null;
+          try {
+            await agentLog('Autonomous Engine', `Gerando imagem para "${topic}"...`, { type: 'communication', to: 'Image Generator' });
+            const image = await generateImageForPost(topic, focusType);
+            imageUrl = image.url || null;
+            await agentLog('Image Generator', `Imagem gerada para "${topic}"`, { type: 'result', to: 'Autonomous Engine' });
+          } catch (imgErr: any) {
+            await agentLog('Image Generator', `⚠️ Falha ao gerar imagem: ${imgErr.message}. Post será publicado sem imagem.`, { type: 'error' });
+          }
+
           const [hours, minutes] = timeStr.split(':').map(Number);
           const scheduledFor = new Date(today);
           scheduledFor.setHours(hours, minutes, 0, 0);
@@ -349,19 +434,53 @@ export function startAutonomousContentEngine() {
             ? generated.hashtags.map((h: string) => `#${h.replace('#', '')}`).join(' ')
             : null;
 
+          // ~30% of posts are video (every 3rd post)
+          const isVideo = i % 3 === 2;
+          const postContentType = isVideo ? 'video' : 'organic';
+
           const saved = await prisma.scheduledPost.create({
             data: {
               topic: generated.topic || topic,
               message: generated.message,
               hashtags: hashtagsStr,
-              status: 'APPROVED',
+              imageUrl,
+              status: 'PENDING',
+              source: 'autonomous-engine',
+              contentType: postContentType,
               scheduledFor,
+              viralScore,
+              viralEnhancements,
             },
           });
 
           scheduledIds.push(saved.id);
           recentTopics.push(topic);
           await agentLog('Autonomous Engine', `📅 Post ${i + 1}/${strategy.postsToCreate} agendado: "${topic}" para as ${timeStr}`, { type: 'action', to: 'Scheduler' });
+
+          // A/B Testing: create variant B for non-video posts
+          if (postContentType !== 'video') {
+            try {
+              // Check if A/B testing is enabled (aggressive mode = always, normal = 50% of posts)
+              let abEnabled = false;
+              try {
+                const aggConfig = await prisma.systemConfig.findUnique({ where: { key: 'aggressive_growth_mode' } });
+                const isAggressive = aggConfig?.value === true || (aggConfig?.value as any)?.enabled === true;
+                abEnabled = isAggressive || Math.random() < 0.5;
+              } catch { abEnabled = Math.random() < 0.5; }
+
+              if (abEnabled) {
+                await agentLog('Autonomous Engine', `Criando variante A/B para "${topic}"...`, { type: 'communication', to: 'A/B Testing' });
+                await createABVariant({
+                  id: saved.id,
+                  topic: generated.topic || topic,
+                  contentType: postContentType,
+                  scheduledFor,
+                });
+              }
+            } catch (abErr: any) {
+              await agentLog('A/B Testing', `⚠️ Falha ao criar variante: ${abErr.message}`, { type: 'error' });
+            }
+          }
         } catch (err: any) {
           await agentLog('Autonomous Engine', `❌ Erro ao gerar post ${i + 1}: ${err.message}`, { type: 'error' });
         }
@@ -391,6 +510,16 @@ export function startTrendingTopicsAgent() {
     await agentLog('Trending Topics', '🔍 Analisando tendências da semana via Gemini AI...', { type: 'action', to: 'Gemini AI' });
     try {
       const report = await analyzeTrendingTopics();
+
+      // Store in TrendingCache for Content Strategist consumption
+      await prisma.trendingCache.create({
+        data: {
+          trends: report.trends as any,
+          generatedAt: new Date(),
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        },
+      });
+
       const topicNames = report.trends.map((t: any) => t.topic).join(', ');
 
       await agentLog('Trending Topics', `📈 ${report.trends.length} tendências identificadas: ${topicNames}. Enviando para Content Strategist...`, { type: 'result', to: 'Content Strategist', payload: { trends: report.trends } });
@@ -447,46 +576,73 @@ export function startTokenMonitor() {
   console.log('[TokenMonitor] Monitor de token iniciado (verifica todo dia às 09:00)');
 }
 
-// Roda 3x ao dia: 6h, 12h, 18h — gera vídeo motivacional e agenda
-export function startMotivationalVideoAgent() {
-  cron.schedule('0 6,12,18 * * *', async () => {
-    await agentLog('Motivational Video', '🎬 Iniciando geração de vídeo motivacional...', { type: 'action' });
-    try {
-      await generateMotivationalVideo();
-    } catch (err: any) {
-      console.error('[Motivational] Erro:', err.message);
-    }
-  });
+// Maps DB function field → actual start function
+const AGENT_FUNCTION_MAP: Record<string, () => void> = {
+  'post-scheduler': startPostScheduler,
+  'comment-responder': startCommentResponder,
+  'metrics-collector': startMetricsAnalyzer,
+  'deadline-notifier': startDueDateNotifier,
+  'content-engine': startAutonomousContentEngine,
+  'trending-topics': startTrendingTopicsAgent,
+  'tiktok-products': startProductOrchestrator,
+  'token-monitor': startTokenMonitor,
+  'content-governor': startContentGovernor,
+  'growth-director': startGrowthDirector,
+  'system-sentinel': startSystemSentinel,
+  'performance-learner': startPerformanceLearner,
+  'ab-testing': startABTestingEngine,
+  'reputation-monitor': startReputationMonitor,
+  'lead-capture': startLeadCaptureAgent,
+  'monetization-engine': startMonetizationEngine,
+  'strategic-command': startStrategicCommandAgent,
+  'market-intelligence': startMarketIntelligenceAgent,
+  'niche-learning': startNicheLearningAgent,
+  'paid-traffic': startPaidTrafficAgent,
+};
 
-  console.log('[Motivational] Agente de vídeos motivacionais iniciado (6h, 12h, 18h)');
+export async function updateLastRun(agentName: string): Promise<void> {
+  try {
+    await prisma.agent.updateMany({
+      where: { OR: [{ name: agentName }, { function: agentName }] },
+      data: { lastRunAt: new Date() },
+    });
+  } catch {}
 }
 
-// Roda todo dia às 20:00: coleta métricas de engajamento dos posts
-export function startPerformanceCollector() {
-  cron.schedule('0 20 * * *', async () => {
-    try {
-      await collectPostPerformance();
-    } catch (err: any) {
-      console.error('[Performance] Erro:', err.message);
-      await agentLog('Performance Collector', `❌ Erro: ${err.message}`, { type: 'error' });
+export async function startAllAgents() {
+  // Try loading active cron agents from DB
+  let startedFromDB = false;
+  try {
+    const activeAgents = await prisma.agent.findMany({
+      where: { status: 'active', cronExpression: { not: null } },
+    });
+
+    if (activeAgents.length > 0) {
+      startedFromDB = true;
+      let started = 0;
+      for (const agent of activeAgents) {
+        const fn = AGENT_FUNCTION_MAP[agent.function];
+        if (fn) {
+          fn();
+          started++;
+        }
+      }
+      console.log(`[Agents] ${started}/${activeAgents.length} cron agents started from DB`);
     }
-  });
+  } catch {
+    // DB not ready or agents table doesn't exist yet — fall back to hardcoded
+  }
 
-  console.log('[Performance] Coletor de performance iniciado (roda todo dia às 20:00)');
-}
+  // Fallback: start all if DB didn't provide agents
+  if (!startedFromDB) {
+    for (const fn of Object.values(AGENT_FUNCTION_MAP)) {
+      fn();
+    }
+    console.log(`[Agents] ${Object.keys(AGENT_FUNCTION_MAP).length} agents started (hardcoded fallback)`);
+  }
 
-export function startAllAgents() {
-  startPostScheduler();
-  startCommentResponder();
-  startMetricsAnalyzer();
-  startDueDateNotifier();
-  startAutonomousContentEngine();
-  startTrendingTopicsAgent();
-  startProductOrchestrator();
-  startTokenMonitor();
-  startMotivationalVideoAgent();
-  startPerformanceCollector();
-  // Log de inicialização
-  agentLog('Sistema', '🟢 Todos os 15 agentes da agência iniciados e monitorando.', { type: 'info' }).catch(() => {});
+  // Seed brand config on startup
+  seedBrandConfig().catch(() => {});
+  agentLog('Sistema', `All agents started (DB-driven: ${startedFromDB}).`, { type: 'info' }).catch(() => {});
   console.log('[Agents] Todos os agentes iniciados ✓');
 }

@@ -46,10 +46,52 @@ router.get('/growth', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.
 // Token monitor
 router.get('/token/status', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getTokenStatus(req as any, res));
 
-// Teste de vídeo motivacional
-router.post('/test-motivational', requireRole('ADMIN'), (req, res) => controller.testMotivationalVideo(req as any, res));
-
 // Logs de comunicação entre agentes
 router.get('/logs', (req, res) => controller.getAgentLogs(req as any, res));
+
+// Phase 6: Control panel routes
+router.get('/status', (req, res) => controller.getAgentsStatus(req as any, res));
+router.post('/safe-mode', requireRole('ADMIN'), (req, res) => controller.setSafeMode(req as any, res));
+router.post('/pause/:agentName', requireRole('ADMIN'), (req, res) => controller.toggleAgent(req as any, res));
+router.post('/override/:id', requireRole('ADMIN'), (req, res) => controller.overridePost(req as any, res));
+router.post('/strategy', requireRole('ADMIN'), (req, res) => controller.overrideStrategy(req as any, res));
+router.post('/sentinel/run', requireRole('ADMIN'), (req, res) => controller.runSentinelNow(req as any, res));
+
+// Phase 4: Brand config
+router.get('/brand', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getBrandConfig(req as any, res));
+router.put('/brand', requireRole('ADMIN'), (req, res) => controller.updateBrandConfigEndpoint(req as any, res));
+
+// Phase 9: Performance insights
+router.get('/performance', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getPerformanceInsightsEndpoint(req as any, res));
+
+// Phase 8: Content campaigns
+router.get('/campaigns', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getCampaigns(req as any, res));
+router.post('/campaigns', requireRole('ADMIN'), (req, res) => controller.createCampaign(req as any, res));
+router.patch('/campaigns/:id', requireRole('ADMIN'), (req, res) => controller.updateCampaign(req as any, res));
+
+// Epic 2: Content Replicator & Multi-format
+router.post('/replicate', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.replicatePost(req as any, res));
+router.get('/replicas/stats', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getReplicaStatsEndpoint(req as any, res));
+router.get('/replicas/:postId', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getPostReplicas(req as any, res));
+router.post('/optimize-platform', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.optimizePost(req as any, res));
+router.post('/carousel', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.generateCarouselEndpoint(req as any, res));
+router.get('/carousel/styles', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getCarouselStylesEndpoint(req as any, res));
+
+// Epic 1: A/B Testing
+router.get('/ab-tests', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getABTestStatsEndpoint(req as any, res));
+router.post('/ab-tests/measure', requireRole('ADMIN'), (req, res) => controller.runABMeasurement(req as any, res));
+
+// Epic 1: Aggressive Growth Mode
+router.get('/aggressive-mode', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getAggressiveMode(req as any, res));
+router.post('/aggressive-mode', requireRole('ADMIN'), (req, res) => controller.toggleAggressiveMode(req as any, res));
+
+// Epic 1: Reputation Monitor
+router.get('/reputation', requireRole('ADMIN', 'MANAGER'), (req, res) => controller.getReputationStatus(req as any, res));
+
+// Agent Registry CRUD
+router.get('/registry', (req, res) => controller.getAgentRegistry(req as any, res));
+router.post('/registry', requireRole('ADMIN'), (req, res) => controller.createAgent(req as any, res));
+router.patch('/registry/:id/status', requireRole('ADMIN'), (req, res) => controller.updateAgentStatus(req as any, res));
+router.delete('/registry/:id', requireRole('ADMIN'), (req, res) => controller.deleteAgent(req as any, res));
 
 export default router;

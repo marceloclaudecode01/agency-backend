@@ -85,7 +85,9 @@ export async function orchestrateProductPosts(
           message: copy.message,
           hashtags: hashtagsStr,
           imageUrl: copy.imageUrl,
-          status: 'APPROVED',
+          status: 'PENDING',
+          source: 'product-orchestrator',
+          contentType: 'product',
           scheduledFor,
         },
       });

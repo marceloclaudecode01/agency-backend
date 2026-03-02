@@ -1,4 +1,5 @@
 import { askGemini } from './gemini';
+import { getBrandContext } from './brand-brain.agent';
 
 const PAGE_CONTEXT = `
 Você é o assistente da página "NewPlay Tv Online" no Facebook.
@@ -13,8 +14,12 @@ Respostas curtas: máximo 2 frases.
 `;
 
 export async function generateCommentReply(comment: string, postContext?: string): Promise<string> {
+  let brandCtx = '';
+  try { brandCtx = await getBrandContext(); } catch {}
+
   const prompt = `
 ${PAGE_CONTEXT}
+${brandCtx}
 
 ${postContext ? `Contexto do post: "${postContext}"` : ''}
 Comentário recebido: "${comment}"

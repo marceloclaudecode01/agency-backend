@@ -6,10 +6,12 @@ import { AuthRequest } from '../../types';
 const authService = new AuthService();
 
 // Access token cookie — name kept as 'token' so Next.js middleware.ts (Story 1.3 scope) keeps working
+const IS_PROD = process.env.NODE_ENV === 'production';
+
 const ACCESS_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict' as const,
+  secure: IS_PROD,
+  sameSite: (IS_PROD ? 'none' : 'strict') as 'none' | 'strict',
   maxAge: 15 * 60 * 1000, // 15 minutes
   path: '/',
 };
@@ -17,8 +19,8 @@ const ACCESS_COOKIE_OPTIONS = {
 // Refresh token cookie — path covers both /api/auth/refresh and /api/auth/logout
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict' as const,
+  secure: IS_PROD,
+  sameSite: (IS_PROD ? 'none' : 'strict') as 'none' | 'strict',
   maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   path: '/api/auth',
 };
